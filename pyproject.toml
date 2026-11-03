@@ -1,0 +1,68 @@
+# ==================================================================================================
+# Pyproject Configuration for the pinax Package
+#
+# TODO: Replace placeholders with actual values.
+#
+# - pinax: Name of the package
+# - Esther Poniatowski : Author's name
+# - 55659704+esther-poniatowski@users.noreply.github.com       : Author's email
+# - Reconciles a folder of reference files with a Zotero library and applies verified change plans. : Brief description of the package
+# - esther-poniatowski   : GitHub username
+# - pinax   : GitHub repository name
+# ==================================================================================================
+
+# --- Build System Requirements --------------------------------------------------------------------
+
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+
+# --- Package Metadata -----------------------------------------------------------------------------
+
+[project]
+name = "pinax"
+version = "0.0.0"
+authors = [{name = "Esther Poniatowski", email = "55659704+esther-poniatowski@users.noreply.github.com"}]
+license = "GPL-3.0-or-later"
+license-files = ["LICENSE"]
+readme = {file = "README.md", content-type = "text/markdown"}
+description = "Reconciles a folder of reference files with a Zotero library and applies verified change plans."
+keywords = []
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Development Status :: 3 - Alpha"
+]
+urls = {homepage = "https://github.com/esther-poniatowski/pinax"}
+
+
+# --- Dependencies ---------------------------------------------------------------------------------
+
+requires-python = ">=3.12"
+
+dependencies = [
+
+]
+
+
+# --- Package Source Code --------------------------------------------------------------------------
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# --- CLI Entry Points -----------------------------------------------------------------------------
+
+[project.scripts]
+pinax = "pinax.cli:app"
+
+# --- Tool Configurations --------------------------------------------------------------------------
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_functions = ["test_*"]
+addopts = "-v --tb=short"
