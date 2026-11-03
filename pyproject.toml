@@ -1,14 +1,9 @@
 # ==================================================================================================
 # Pyproject Configuration for the pinax Package
 #
-# TODO: Replace placeholders with actual values.
-#
-# - pinax: Name of the package
-# - Esther Poniatowski : Author's name
-# - 55659704+esther-poniatowski@users.noreply.github.com       : Author's email
-# - Reconciles a folder of reference files with a Zotero library and applies verified change plans. : Brief description of the package
-# - esther-poniatowski   : GitHub username
-# - pinax   : GitHub repository name
+# Pinax reconciles a folder of reference files with a Zotero library. It reads the library, matches
+# each file to an item, writes a change plan, generates the Zotero script that applies the plan, and
+# verifies the library against the plan afterwards.
 # ==================================================================================================
 
 # --- Build System Requirements --------------------------------------------------------------------
@@ -28,7 +23,7 @@ license = "GPL-3.0-or-later"
 license-files = ["LICENSE"]
 readme = {file = "README.md", content-type = "text/markdown"}
 description = "Reconciles a folder of reference files with a Zotero library and applies verified change plans."
-keywords = []
+keywords = ["zotero", "bibliography", "reconciliation", "pdf", "better-bibtex"]
 classifiers = [
     "Programming Language :: Python :: 3",
     "Operating System :: OS Independent",
@@ -42,7 +37,8 @@ urls = {homepage = "https://github.com/esther-poniatowski/pinax"}
 requires-python = ">=3.12"
 
 dependencies = [
-
+    "pyyaml",
+    "typer",
 ]
 
 

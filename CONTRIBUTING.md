@@ -1,14 +1,3 @@
-<!--
-TODO: Replace all placeholders of the form `{{ ... }}` with project-specific values.
-
-- `pinax`          : Repository name
-- `esther-poniatowski`        : GitHub username of the project owner
-- `pinax`       : Python package name
-- `pinax`           : Conda environment name
-
-TODO: Review and adapt all descriptive content to reflect the specific details of the project.
--->
-
 # Contributing to "pinax"
 
 > [!IMPORTANT]

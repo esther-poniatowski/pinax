@@ -24,7 +24,8 @@ dependencies:
   - sphinx-rtd-theme       # ReadTheDocs theme
   - sphinx-needs           # for requirements and specifications in Sphinx
   - esbonio                # language server for Sphinx
+  # PDF text extraction
+  - poppler                # pdftotext and pdfinfo
   # CLI
   - typer                  # command line interface
   - rich                   # terminal output formatting
-variables:

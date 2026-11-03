@@ -1,5 +1,5 @@
 // =================================================================================================
-// VS Code Debugging Configurations for {{ project_name}}
+// VS Code Debugging Configurations for pinax
 //
 // Defines default debug configuration for Python files using `debugpy`.
 // Launches the current file in the integrated terminal.
