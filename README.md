@@ -1,22 +1,6 @@
-<!--
-TODO: Replace all placeholders of the form `{{ ... }}` with project-specific values.
-
-- `pinax`     : Repository name (e.g., architekta)
-- `esther-poniatowski`   : GitHub username of the project owner
-- `pinax`  : Python package name (import name)
-- `eresthanaconda`  : Conda channel name (e.g., eresthanaconda)
-- `Reconciles a folder of reference files with a Zotero library and applies verified change plans.`   : One-line project description
-
-TODO: Review and adapt all descriptive content to reflect the specific details of the
-project (e.g., feature list, command-line examples, configuration options).
-
-TODO: Remove sections marked OPTIONAL if they do not apply to the project.
--->
 # pinax
 
-[![Conda](https://img.shields.io/badge/conda-eresthanaconda--channel-blue)](docs/guide/installation.md)
-[![Maintenance](https://img.shields.io/maintenance/yes/2026)]()
-[![Last Commit](https://img.shields.io/github/last-commit/esther-poniatowski/pinax)](https://github.com/esther-poniatowski/pinax/commits/main)
+![Maintenance](https://img.shields.io/maintenance/yes/2026)
 [![Python](https://img.shields.io/badge/python-%E2%89%A53.12-blue)](https://www.python.org/)
 [![License: GPL](https://img.shields.io/badge/License-GPL--3.0-yellow.svg)](https://opensource.org/licenses/GPL-3.0)
 
@@ -24,112 +8,74 @@ Reconciles a folder of reference files with a Zotero library and applies verifie
 
 ---
 
-## Table of Contents
-
-- [Overview](#overview)
-- [Features](#features)
-- [Quick Start](#quick-start)
-- [Documentation](#documentation)
-- [Contributing](#contributing)
-- [Acknowledgments](#acknowledgments)
-- [License](#license)
-
 ## Overview
 
-<!--
-State what the project does and why it exists in 2-4 sentences.
-The subject of each sentence should be the tool or the problem — not "this project"
-or "this section."
--->
+A literature review leaves folders of PDF files. The work of each file may already lie in a Zotero library, possibly under another file name, without its PDF, or outside the collection of the review. Pinax maps each file of such a folder to the Zotero item that holds its work, and decides the changes that the library needs. One change plan records these changes:
+
+- the works to import;
+- the PDFs to attach to existing items;
+- the existing items to add to the collection of the review;
+- the item records to correct.
+
+From the plan, Pinax generates a script for the researcher to run inside Zotero. After the change, Pinax verifies the library against the same plan. Finally, Pinax exports the citation keys of the items that hold the files of each folder.
 
 ### Motivation
 
-<!--
-State the problem or gap that the project addresses.
-Lead with the concrete pain point, not with the tool's response to it.
--->
+Matching a folder of references with a library by hand fails in three recurrent ways:
 
-### Advantages
+- Zotero renames a file after it retrieves the metadata, and a merge deletes the items that it absorbs. A match recorded by file name or by item key therefore goes stale;
+- a digital object identifier (DOI) or a title found on the first page of a PDF often belongs to a cited work. A match by identifier alone then selects the wrong item;
+- a batch of manual changes in Zotero leaves no record of the intended state, so the result cannot be checked.
 
-<!--
-List 3-5 concrete advantages over alternatives or manual approaches.
-Each item should name the benefit directly, without preambles such as
-"It provides..." or "This tool introduces...".
--->
+Pinax addresses each failure in turn. First, Pinax identifies every file by its content, and follows the merges recorded in the library. Second, Pinax confirms every candidate item other than an identical stored file by the opening words of its title. Third, Pinax writes nothing without a plan, and checks the library against that plan afterwards.
 
----
+### Safety
 
-## Features
+Pinax only reads the library. Every change goes through the generated script, run by the researcher inside Zotero, as the [decision on the change plan](docs/adr/change-plan-contract.md) records.
 
-- [X] **Feature 1:** Description.
-- [ ] **Feature 2:** Description.
+### Status
+
+Pre-alpha. The stages from the inventory to the exports are implemented and tested on synthetic libraries.
 
 ---
 
-## Quick Start
+## Quick start
 
-<!--
-Provide a minimal, copy-pasteable example that demonstrates the core value.
-Keep the scope narrow: one CLI invocation and/or one Python snippet.
-Detailed command documentation belongs in `docs/guide/cli-reference.md`.
--->
+A first run on a folder needs a configuration file and the Zotero application running. The configuration file below declares the folder of references, the collection that receives the filed and imported items, and the workspace of the artifacts:
 
-### CLI
+```yaml
+workspace: .pinax
+sources:
+  root: ~/references/review
+library:
+  destination: ABCD2345
+```
+
+The commands below run the four stages that precede any change to the library:
 
 ```sh
-pinax --help
+pinax read --config pinax.yml
+pinax inventory --config pinax.yml
+pinax match --config pinax.yml
+pinax plan --config pinax.yml
 ```
 
-### Application Programming Interface
-
-```python
-import pinax
-
-pinax.info()
-```
+The [guide](docs/guide.md) describes each stage, from this point to the exports.
 
 ---
 
 ## Documentation
 
-| Guide | Content |
-| ----- | ------- |
-| [Installation](docs/guide/installation.md) | Prerequisites, pip/conda/source setup |
-| [Usage](docs/guide/usage.md) | Workflows and detailed examples |
-| [CLI Reference](docs/guide/cli-reference.md) | Full command registry and options |
-| [Configuration](docs/guide/configuration.md) | Configuration files, environment variables, precedence |
-<!-- OPTIONAL -->
-| [Architecture](docs/architecture.md) | Design strategy, module organization, layers |
-
-Full API documentation and rendered guides are also available at
-[esther-poniatowski.github.io/pinax](https://esther-poniatowski.github.io/pinax/).
+The [documentation index](docs/_index.md) is the entry point.
 
 ---
 
 ## Contributing
 
-Contribution guidelines are described in [CONTRIBUTING.md](CONTRIBUTING.md).
-
----
-
-## Acknowledgments
-
-### Authors
-
-**Author**: @esther-poniatowski
-
-For academic use, the GitHub "Cite this repository" feature generates citations in
-various formats. The [citation metadata](CITATION.cff) file is also available.
-
-<!-- OPTIONAL -->
-### Third-Party Dependencies
-
-- **[Library A](link)** -- Purpose.
-- **[Library B](link)** -- Purpose.
+Contributions follow the [contribution guidelines](CONTRIBUTING.md).
 
 ---
 
 ## License
 
-This project is licensed under the terms of the
-[GNU General Public License v3.0](LICENSE).
+This project is licensed under the terms of the [GNU General Public License v3.0](LICENSE).
