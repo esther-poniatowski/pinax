@@ -31,8 +31,8 @@ Examples
 --------
 >>> words("Memory: and Perception (2nd ed.)")
 ['memory', 'and', 'perception', '2nd']
->>> title_head("The attentional blink: a review of models", 3)
-'the attentional blink'
+>>> title_head("The structure of example records: a survey", 3)
+'the structure example'
 >>> normalize_doi("https://doi.org/10.1000/ABC.123 ")
 '10.1000/abc.123'
 """
@@ -250,8 +250,8 @@ def find_doi(text: str) -> str:
 
     Examples
     --------
-    >>> find_doi("Published as doi:10.1162/jocn.1989.1.3.244.")
-    '10.1162/jocn.1989.1.3.244'
+    >>> find_doi("Published as doi:10.5555/synthetic.2001.1.3.244.")
+    '10.5555/synthetic.2001.1.3.244'
     """
     found = _DOI.search(text)
     return normalize_doi(found.group(1)) if found else ""

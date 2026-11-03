@@ -33,8 +33,8 @@ def test_content_words_drop_stop_words() -> None:
 
 def test_title_head_keeps_opening_words() -> None:
     assert (
-        title_head("A neural model of the attentional blink in time", 4)
-        == "neural model the attentional"
+        title_head("A sparse model of the example signal in time", 4)
+        == "sparse model the example"
     )
 
 
