@@ -50,6 +50,9 @@ MIN_WORD_LENGTH = 3
 """Shortest word kept by `words`: shorter tokens are mostly initials, page numbers or articles."""
 
 _SPLIT = re.compile(r"[^a-z0-9]+")
+# The ASCII fold deletes a typographic apostrophe but keeps an ASCII one, which the split turns
+# into a word boundary; mapping every form to a space splits "brain's" and "brain’s" alike.
+_APOSTROPHES = re.compile("['`\u2018\u2019\u02bc]")
 _DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.IGNORECASE)
 _DOI_PREFIX = re.compile(r"^(https?://(dx\.)?doi\.org/|doi:\s*)")
 _DOI_TRAILING = ".,;)]"
@@ -84,9 +87,11 @@ def words(text: str) -> list[str]:
     Returns
     -------
     list[str]
-        Folded alphanumeric tokens of at least `MIN_WORD_LENGTH` characters, in order.
+        Folded alphanumeric tokens of at least `MIN_WORD_LENGTH` characters, in order. Every
+        form of apostrophe separates words.
     """
-    return [word for word in _SPLIT.split(fold(text)) if len(word) >= MIN_WORD_LENGTH]
+    folded = fold(_APOSTROPHES.sub(" ", text))
+    return [word for word in _SPLIT.split(folded) if len(word) >= MIN_WORD_LENGTH]
 
 
 def content_words(text: str) -> set[str]:

@@ -20,6 +20,13 @@ def test_words_fold_accents_and_drop_short_tokens() -> None:
     assert words("Évaluation d'un modèle: 2e éd.") == ["evaluation", "modele"]
 
 
+def test_apostrophes_split_words_in_every_form() -> None:
+    expected = ["the", "brain", "router"]
+    assert words("The brain's router") == expected
+    assert words("The brain\u2019s router") == expected
+    assert words("The brain`s router") == expected
+
+
 def test_content_words_drop_stop_words() -> None:
     assert content_words("The model of the blink") == {"model", "blink"}
 
