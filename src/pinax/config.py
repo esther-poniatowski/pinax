@@ -22,7 +22,7 @@ load_config(path) -> Config
     Read and validate a configuration file.
 """
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
 
@@ -149,6 +149,7 @@ class Config:
 
 
 def _mapping(value: Any, where: str) -> dict[str, Any]:
+    """Mapping of a section, empty when the section is absent."""
     if value is None:
         return {}
     if not isinstance(value, dict):
@@ -157,6 +158,7 @@ def _mapping(value: Any, where: str) -> dict[str, Any]:
 
 
 def _path(value: Any, base: Path, where: str) -> Path:
+    """Absolute path of a value, resolved against the directory of the configuration file."""
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{where} must be a non-empty path")
     path = Path(value).expanduser()
@@ -164,10 +166,12 @@ def _path(value: Any, base: Path, where: str) -> Path:
 
 
 def _optional_path(value: Any, base: Path, where: str) -> Path | None:
+    """Absolute path of a value, or None when the key is absent."""
     return None if value is None else _path(value, base, where)
 
 
 def _strings(value: Any, where: str) -> tuple[str, ...]:
+    """List of strings of a key, empty when the key is absent."""
     if value is None:
         return ()
     if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
@@ -176,12 +180,14 @@ def _strings(value: Any, where: str) -> tuple[str, ...]:
 
 
 def _reject_unknown(data: dict[str, Any], known: set[str], where: str) -> None:
+    """Fail on a key outside the known keys of a section."""
     unknown = sorted(set(data) - known)
     if unknown:
         raise ConfigError(f"unknown keys in {where}: {", ".join(unknown)}")
 
 
 def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
+    """Validated section `sources`."""
     _reject_unknown(data, {"root", "folders", "ignore", "pages"}, "sources")
     pages = data.get("pages", 2)
     if not isinstance(pages, int) or pages < 1:
@@ -196,6 +202,7 @@ def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
 
 
 def _library(data: dict[str, Any], base: Path) -> LibraryConfig:
+    """Validated section `library`."""
     _reject_unknown(data, {"api", "storage", "destination", "scope"}, "library")
     destination = data.get("destination")
     if not isinstance(destination, str) or not destination:
@@ -215,8 +222,9 @@ def _library(data: dict[str, Any], base: Path) -> LibraryConfig:
 
 
 def _matching(data: dict[str, Any]) -> MatchingConfig:
+    """Validated section `matching`; each value takes the type of its default."""
     defaults = MatchingConfig()
-    known = set(defaults.__dataclass_fields__)
+    known = {item.name for item in fields(MatchingConfig)}
     _reject_unknown(data, known, "matching")
     values: dict[str, Any] = {}
     for name in known:
