@@ -21,7 +21,7 @@ from collections.abc import Mapping, Sequence
 
 from pinax.config import MatchingConfig
 from pinax.errors import ConfigError
-from pinax.library.model import Library
+from pinax.library.model import Item, Library
 from pinax.matching.candidates import CandidateSource, DoiSource, NameSource, SameFileSource
 from pinax.matching.confirm import TitleConfirmer, TitleIndex
 from pinax.matching.model import Candidate, Match, Method, Status, Verdict
@@ -114,12 +114,16 @@ class Matcher:
         """Match every content of an inventory, in inventory order."""
         return [self.match(content) for content in inventory]
 
-    def _title(self, key: str) -> str:
-        """Title of the live item of a key, following merges."""
+    def _require(self, key: str) -> Item:
+        """Live item of a key, following merges; a missing item is a configuration error."""
         item = self._library.survivor(key)
         if item is None:
             raise ConfigError(f"item {key} is not in the library snapshot")
-        return item.title
+        return item
+
+    def _title(self, key: str) -> str:
+        """Title of the live item of a key, following merges."""
+        return self._require(key).title
 
     def _assigned(self, content: Content, resolution: Resolution) -> Match:
         """Match decided by an `assign` or `preprint-of` resolution, with its verdict."""
@@ -199,8 +203,8 @@ class Matcher:
         Raises
         ------
         ConfigError
-            If a resolution names an item absent from the library, or accepts a content that no
-            route matches.
+            If a resolution names an item absent from the library, including the item of a
+            rejection, or accepts a content that no route matches.
         """
         resolution = self._resolutions.get(content.sha256)
         if resolution and resolution.action in (Action.ASSIGN, Action.PREPRINT_OF):
@@ -211,6 +215,7 @@ class Matcher:
             if not resolution.item:
                 note = "; ".join(filter(None, ["rejected by resolution", resolution.note]))
                 return Match(content.sha256, Status.ABSENT, note=note)
+            self._require(resolution.item)
             rejected.add(resolution.item)
             notes.append(f"{resolution.item} rejected by resolution")
         found = self._routes(content, rejected, notes) or self._reverse(content, rejected, notes)

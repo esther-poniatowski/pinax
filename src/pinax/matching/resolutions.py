@@ -39,6 +39,7 @@ from pinax.errors import ConfigError
 from pinax.sources.inventory import Content, Inventory
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
+_KNOWN = {"file", "action", "item", "note"}
 
 
 class Action(StrEnum):
@@ -132,15 +133,17 @@ def load_resolutions(path: Path | None, inventory: Inventory) -> Resolutions:
     Raises
     ------
     ConfigError
-        If an entry is malformed, names no unique content, lacks a required item, or two entries
-        concern the same content.
+        If the file or an entry holds an unknown key, an entry is malformed, names no unique
+        content or lacks a required item, or two entries concern the same content.
     """
     if path is None:
         return Resolutions()
     if not path.is_file():
         raise ConfigError(f"resolutions file not found: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    entries = data.get("resolutions", []) if isinstance(data, dict) else None
+    if not isinstance(data, dict) or set(data) - {"resolutions"}:
+        raise ConfigError(f"{path} must hold only the key `resolutions`")
+    entries = data.get("resolutions", [])
     if not isinstance(entries, list):
         raise ConfigError(f"{path} must hold a list under `resolutions`")
     resolved: dict[str, Resolution] = {}
@@ -148,6 +151,9 @@ def load_resolutions(path: Path | None, inventory: Inventory) -> Resolutions:
         where = f"{path}: resolution {index + 1}"
         if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
             raise ConfigError(f"{where} must name a `file`")
+        unknown = sorted(set(entry) - _KNOWN)
+        if unknown:
+            raise ConfigError(f"{where}: unknown keys {", ".join(unknown)}")
         try:
             action = Action(str(entry.get("action")))
         except ValueError as error:

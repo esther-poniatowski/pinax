@@ -86,7 +86,9 @@ def load_corrections(path: Path | None) -> tuple[CorrectOp, ...]:
     if not path.is_file():
         raise ConfigError(f"corrections file not found: {path}")
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    entries = data.get("corrections", []) if isinstance(data, dict) else None
+    if not isinstance(data, dict) or set(data) - {"corrections"}:
+        raise ConfigError(f"{path} must hold only the key `corrections`")
+    entries = data.get("corrections", [])
     if not isinstance(entries, list):
         raise ConfigError(f"{path} must hold a list under `corrections`")
     corrections: list[CorrectOp] = []

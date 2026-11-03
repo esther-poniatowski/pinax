@@ -125,6 +125,7 @@ def test_corrections_are_loaded_and_validated(tmp_path: Path, sources: SourceTre
         ("corrections:\n  - {item: A, colour: red}\n", "unknown keys"),
         ("corrections:\n  - {item: A}\n  - {item: A}\n", "corrected twice"),
         ("corrections:\n  - {item: A, creators: [{firstName: X}]}\n", "lastName"),
+        ("correction:\n  - {item: A}\n", "only the key `corrections`"),
     ],
 )
 def test_invalid_corrections_are_refused(tmp_path: Path, text: str, message: str) -> None:

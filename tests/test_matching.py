@@ -180,6 +180,7 @@ def test_resolutions_reject_accept_assign_and_preprint(sources: SourceTree) -> N
         ("{file: missing.pdf, action: reject}", "names no file"),
         ("{file: a.pdf, action: assign}", "requires an `item`"),
         ("{file: a.pdf, action: delete}", "`action` must be one of"),
+        ("{file: a.pdf, action: reject, itme: ITEM0001}", "unknown keys itme"),
     ],
 )
 def test_invalid_resolutions_are_refused(sources: SourceTree, entry: str, message: str) -> None:
@@ -198,6 +199,22 @@ def test_resolution_naming_a_missing_item_fails(sources: SourceTree) -> None:
             library([]),
             resolutions="resolutions:\n  - {file: a.pdf, action: assign, item: NONE0001}\n",
         )
+
+
+def test_rejection_of_a_missing_item_fails(sources: SourceTree) -> None:
+    sources.add("a/a.pdf", pdf_bytes("a"))
+    with pytest.raises(ConfigError, match="not in the library"):
+        _match(
+            sources,
+            library([]),
+            resolutions="resolutions:\n  - {file: a.pdf, action: reject, item: NONE0001}\n",
+        )
+
+
+def test_unknown_top_level_key_of_resolutions_fails(sources: SourceTree) -> None:
+    sources.add("a/a.pdf", pdf_bytes("a"))
+    with pytest.raises(ConfigError, match="only the key `resolutions`"):
+        _match(sources, library([]), resolutions="resolution:\n  - {file: a.pdf, action: accept}\n")
 
 
 def test_accept_without_any_candidate_fails(sources: SourceTree) -> None:
