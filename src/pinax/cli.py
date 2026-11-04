@@ -161,7 +161,8 @@ def cli_plan(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "
     except PinaxError as error:
         raise _fail(error) from error
     typer.echo(
-        f"plan: {len(plan.imports)} imports, {len(plan.attachments)} attachments, "
+        f"plan: {len(plan.creations)} creations, {len(plan.imports)} imports, "
+        f"{len(plan.attachments)} attachments, "
         f"{len(plan.filings)} filings, {len(plan.corrections)} corrections, "
         f"{len(plan.skipped)} skipped works"
     )
