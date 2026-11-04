@@ -117,12 +117,12 @@ def test_scanned_pdf_is_left_to_check_not_rejected(sources: SourceTree) -> None:
 
 
 def test_name_match_accepts_garbled_surnames_and_invalid_years(sources: SourceTree) -> None:
-    name = "2018_Daggett_temporal_dynamics_attention_recurrent.pdf"
+    name = "2018_Quellmark_temporal_dynamics_attention_recurrent.pdf"
     sources.add(f"a/{name}", pdf_bytes("n"), [f"{TITLE}. Abstract."])
     lib = library(
         [
-            api_item("ITEM0001", title=TITLE, date="0009", creators=["Daggettn Eben"]),
-            api_item("ITEM0002", title=TITLE, date="1990", creators=["Daggett"]),
+            api_item("ITEM0001", title=TITLE, date="0009", creators=["Quellmarkn Ida"]),
+            api_item("ITEM0002", title=TITLE, date="1990", creators=["Quellmark"]),
         ]
     )
     match = _match(sources, lib)[name]

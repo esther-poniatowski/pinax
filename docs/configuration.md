@@ -15,7 +15,7 @@ The configuration file declares where the files lie, which collection receives t
 workspace: .pinax                # directory of the artifacts; default `.pinax`
 sources:
   root: ~/references/review      # required
-  folders: [bibliography1, bibliography2]   # default: every file under the root
+  folders: [reading, methods]   # default: every file under the root
   ignore: [.DS_Store]            # default: [.DS_Store]
   pages: 2                       # opening pages read from each PDF; default 2
 library:

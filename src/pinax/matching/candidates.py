@@ -24,8 +24,8 @@ from pinax.text import content_words
 
 _YEAR_PREFIX = re.compile(r"^\d{4}[a-z]?_")
 MIN_PREFIX = 4
-"""Shortest surname or token compared by prefix: a garbled surname such as `Daggettn` still
-matches `daggett`, while shorter prefixes would match unrelated names."""
+"""Shortest surname or token compared by prefix: a garbled surname such as `Quellmarkn` still
+matches `quellmark`, while shorter prefixes would match unrelated names."""
 UNDATED_PENALTY = 0.1
 """Score removed when the year cannot be compared, so that a dated match wins a tie."""
 
