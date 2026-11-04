@@ -73,33 +73,56 @@ def _write(path: Path, text: str) -> Path:
 def test_config_resolves_relative_paths_against_its_file(tmp_path: Path) -> None:
     path = _write(
         tmp_path / "pinax.yml",
-        "workspace: out\nsources: {root: refs, folders: [a]}\n"
-        "library: {destination: DEST0001, storage: store}\nmatching: {reject_below: 1}\n",
+        "workspace: out\nsources: {root: refs}\n"
+        "targets:\n"
+        "  - {folder: a, destination: {key: DEST0001}}\n"
+        f"  - {{folder: {tmp_path}/refs/b/c/, destination: {{path: /Review/B/}}, scope: {{key: R}}}}\n"
+        "library: {storage: store}\nmatching: {reject_below: 1}\n",
     )
     config = load_config(path)
     assert config.workspace == tmp_path / "out"
     assert config.sources.root == tmp_path / "refs"
     assert config.library.storage == tmp_path / "store"
-    assert config.library.scope_key == "DEST0001"
+    assert [(t.folder, str(t.destination), str(t.scope)) for t in config.targets] == [
+        ("a", "key DEST0001", "None"),
+        ("b/c", "path Review/B", "key R"),
+    ]
     assert config.matching.reject_below == 1.0
+
+
+TARGET = "targets: [{folder: ., destination: {key: D}}]\n"
 
 
 @pytest.mark.parametrize(
     ("text", "message"),
     [
-        ("sources: {root: r}\nlibrary: {}\n", "library.destination"),
-        ("sources: {root: r}\nlibrary: {destination: D}\nextra: 1\n", "unknown keys"),
-        ("library: {destination: D}\n", "sources.root"),
-        ("sources: {root: r, pages: 0}\nlibrary: {destination: D}\n", "sources.pages"),
+        ("sources: {root: r}\n", "targets must list at least one folder"),
+        ("sources: {root: r}\ntargets: []\n", "targets must list at least one folder"),
+        ("sources: {root: r}\n" + TARGET + "extra: 1\n", "unknown keys"),
+        (TARGET, "sources.root"),
+        ("sources: {root: r, pages: 0}\n" + TARGET, "sources.pages"),
+        ("sources: {root: r, folders: [a]}\n" + TARGET, "unknown keys in sources: folders"),
+        ("sources: {root: r}\nlibrary: {destination: D}\n" + TARGET, "unknown keys in library"),
         (
-            "sources: {root: r}\nlibrary: {destination: D}\nmatching: {title_words: x}\n",
-            "title_words",
+            "sources: {root: r}\ntargets: [{folder: a, destination: {key: D, path: x}}]\n",
+            "exactly one of `key` and `path`",
         ),
+        ("sources: {root: r}\ntargets: [{folder: a, destination: {}}]\n", "exactly one"),
+        ("sources: {root: r}\ntargets: [{folder: /elsewhere, destination: {key: D}}]\n", "outside"),
+        ("sources: {root: r}\ntargets: [{folder: ../up, destination: {key: D}}]\n", "climb"),
         (
-            "sources: {root: r}\nlibrary: {destination: D}\nmatching: {stop_words: the}\n",
+            "sources: {root: r}\n"
+            "targets: [{folder: a, destination: {key: D}}, {folder: a/, destination: {key: E}}]\n",
+            "folders named by several targets: a",
+        ),
+        ("sources: {root: r, names: []}\n" + TARGET, "sources.names must list"),
+        ("sources: {root: r, names: ['{year}']}\n" + TARGET, "has no {title}"),
+        ("sources: {root: r}\n" + TARGET + "matching: {title_words: x}\n", "title_words"),
+        (
+            "sources: {root: r}\n" + TARGET + "matching: {stop_words: the}\n",
             "matching.stop_words must be a list",
         ),
-        ("sources: {root: r}\nlibrary: {destination: D}\nmatching: [1]\n", "must be a mapping"),
+        ("sources: {root: r}\n" + TARGET + "matching: [1]\n", "must be a mapping"),
     ],
 )
 def test_config_rejects_invalid_files(tmp_path: Path, text: str, message: str) -> None:
@@ -116,8 +139,9 @@ def test_defaults_set_every_matching_key() -> None:
 def test_consumer_overrides_one_key_and_replaces_lists(tmp_path: Path) -> None:
     path = _write(
         tmp_path / "pinax.yml",
-        "sources: {root: refs, ignore: [Thumbs.db]}\nlibrary: {destination: D}\n"
-        "matching: {stop_words: [Über, de, la], surname_prefix: 6}\n",
+        "sources: {root: refs, ignore: [Thumbs.db]}\n"
+        + TARGET
+        + "matching: {stop_words: [Über, de, la], surname_prefix: 6}\n",
     )
     config = load_config(path)
     assert config.sources.ignore == ("Thumbs.db",)

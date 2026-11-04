@@ -12,6 +12,7 @@ import shlex
 import urllib.parse
 
 from pinax.plans.model import ChangePlan
+from pinax.plans.staging import subfolder
 
 EMPTY = "—"
 """Content of an empty table cell."""
@@ -48,31 +49,55 @@ def render_worklist(plan: ChangePlan, staging: Path) -> str:
     str
         Markdown document: the ordered steps, then one table per kind of operation.
     """
-    dest = plan.destination
+    path = {dest.key: dest.path for dest in plan.destinations}
     lines = [
         "# Worklist of the change plan",
         "",
-        f"Destination: `{dest.path}` (key `{dest.key}`).",
+        "## Destinations",
+        "",
+        "| Collection | Key | Counted as filed under | Staged sub-folder |",
+        "| --- | --- | --- | --- |",
+    ]
+    lines += [
+        f"| `{_cell(dest.path)}` | `{dest.key}` | `{_cell(dest.scope_path)}` | "
+        f"{_cell(subfolder(dest))} |"
+        for dest in plan.destinations
+    ]
+    lines += [
         "",
         "## Steps",
         "",
         "1. Review the tables below and the generated script.",
-        f"2. Select the destination collection in Zotero, then open the staging folder with "
-        f"`open {shlex.quote(str(staging))}` and drag its files, not the folder, into the "
-        "collection.",
+        f"2. Open the staging folder with `open {shlex.quote(str(staging))}`. For each sub-folder, "
+        "select its collection in Zotero, then drag the files of the sub-folder, not the folder, "
+        "into the collection.",
         '3. Run the script in Tools > Developer > Run JavaScript, with "Run as async function" '
         "ticked, and save the log it returns.",
         "4. Take a new snapshot and run `pinax check`.",
         "",
         f"## Import ({len(plan.imports)})",
         "",
-        "| Staged name | DOI | Source |",
-        "| --- | --- | --- |",
+        "| Staged name | Destination | DOI | Source |",
+        "| --- | --- | --- | --- |",
     ]
     lines += [
-        f"| {_cell(op.staged_name)} | {op.doi or EMPTY} | {_link(op.file.path)} |"
+        f"| {_cell(op.staged_name)} | `{_cell(path[op.destination])}` | {op.doi or EMPTY} | "
+        f"{_link(op.file.path)} |"
         for op in plan.imports
     ]
+    later = [op for op in plan.imports if op.also]
+    if later:
+        lines += [
+            "",
+            "The next plan files these imported works into the other destinations of their "
+            "folders: "
+            + "; ".join(
+                f"{_cell(op.staged_name)} into "
+                + ", ".join(f"`{_cell(path[key])}`" for key in op.also)
+                for op in later
+            )
+            + ".",
+        ]
     lines += [
         "",
         f"## Attach a PDF ({len(plan.attachments)})",
@@ -86,14 +111,14 @@ def render_worklist(plan: ChangePlan, staging: Path) -> str:
     ]
     lines += [
         "",
-        f"## File into the destination ({len(plan.filings)})",
+        f"## File into a destination ({len(plan.filings)})",
         "",
-        "| Item | Citation key | Title | Current collections |",
-        "| --- | --- | --- | --- |",
+        "| Item | Citation key | Title | Destination | Current collections |",
+        "| --- | --- | --- | --- | --- |",
     ]
     lines += [
         f"| `{op.item}` | `{op.citation_key}` | {_cell(op.title)} | "
-        f"{_cell("; ".join(op.current)) or EMPTY} |"
+        f"`{_cell(path[op.destination])}` | {_cell("; ".join(op.current)) or EMPTY} |"
         for op in plan.filings
     ]
     lines += [

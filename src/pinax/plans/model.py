@@ -2,18 +2,18 @@
 The change plan: the contract between the plan builder, the script writer and the checks.
 
 Nothing writes to the library without a plan, and the checks read the same plan back. A plan holds
-five lists of operations:
+the destination collections of its targets, and five lists of operations:
 
-- imports: works that no item holds, each imported from one staged file;
+- imports: works that no item holds, each imported from one staged file into one destination;
 - attachments: PDFs to attach to existing items without one;
-- filings: existing items to add to the destination collection;
+- filings: existing items to add to a destination collection;
 - corrections: fields, types and creators to correct;
 - skipped: works that cannot be imported, with the reason.
 
 Classes
 -------
 Destination
-    Collection receiving the filed and imported items.
+    Collection receiving the filed and imported items of one or more folders.
 FileRef
     Source file of an operation, identified by its content.
 ImportOp, AttachOp, FileOp, CorrectOp, SkippedWork
@@ -29,13 +29,13 @@ from typing import Any
 
 from pinax.errors import ArtifactError
 
-PLAN_FORMAT = "pinax-plan/1"
+PLAN_FORMAT = "pinax-plan/2"
 
 
 @dataclass(frozen=True)
 class Destination:
     """
-    Collection receiving the filed and imported items.
+    Collection receiving the filed and imported items of one or more folders.
 
     Attributes
     ----------
@@ -45,11 +45,17 @@ class Destination:
         Collection name, checked by the script before any write.
     path : str
         Full path of the collection, for the reader of the plan.
+    scope : str
+        Key of the collection whose sub-tree counts as filed for this destination.
+    scope_path : str
+        Full path of the scope, for the reader of the plan.
     """
 
     key: str
     name: str
     path: str
+    scope: str
+    scope_path: str
 
 
 @dataclass(frozen=True)
@@ -92,6 +98,12 @@ class ImportOp:
         Name of the copy in the staging folder, unique within it.
     members : tuple[str, ...]
         SHA-256 of every content of the work.
+    destination : str
+        Key of the collection into which the staged file is dropped: the destination of the
+        folder of the imported file.
+    also : tuple[str, ...]
+        Keys of the other destinations of the folders of the work. The item does not exist before
+        the drop, so the next plan files it there.
     """
 
     work_id: str
@@ -99,6 +111,8 @@ class ImportOp:
     file: FileRef
     staged_name: str
     members: tuple[str, ...]
+    destination: str
+    also: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -127,7 +141,7 @@ class AttachOp:
 @dataclass(frozen=True)
 class FileOp:
     """
-    Existing item to add to the destination collection.
+    Existing item to add to a destination collection.
 
     Attributes
     ----------
@@ -137,6 +151,8 @@ class FileOp:
         Citation key, for the reader.
     title : str
         Title, for the reader.
+    destination : str
+        Key of the collection receiving the item.
     current : tuple[str, ...]
         Paths of the collections holding the item now; it stays in them.
     """
@@ -144,6 +160,7 @@ class FileOp:
     item: str
     citation_key: str
     title: str
+    destination: str
     current: tuple[str, ...] = ()
 
 
@@ -231,21 +248,33 @@ class ChangePlan:
 
     Attributes
     ----------
-    destination : Destination
-        Collection receiving filed and imported items.
-    scope : str
-        Key of the collection whose sub-tree counted as filed when the plan was built.
+    destinations : tuple[Destination, ...]
+        Collections receiving filed and imported items, each with the scope that counted as filed
+        when the plan was built.
     imports, attachments, filings, corrections, skipped
         Operations of the plan.
     """
 
-    destination: Destination
-    scope: str
+    destinations: tuple[Destination, ...]
     imports: tuple[ImportOp, ...] = ()
     attachments: tuple[AttachOp, ...] = ()
     filings: tuple[FileOp, ...] = ()
     corrections: tuple[CorrectOp, ...] = ()
     skipped: tuple[SkippedWork, ...] = ()
+
+    def destination(self, key: str) -> Destination:
+        """
+        Destination of a collection key.
+
+        Raises
+        ------
+        ArtifactError
+            If no destination of the plan has the key.
+        """
+        for destination in self.destinations:
+            if destination.key == key:
+                return destination
+        raise ArtifactError(f"the plan has no destination {key}")
 
     def script_items(self) -> list[str]:
         """Keys of every existing item that the script touches, in plan order, without repeats."""
@@ -281,8 +310,7 @@ class ChangePlan:
             raise ArtifactError(f"not a change plan of format {PLAN_FORMAT}")
         try:
             return cls(
-                destination=Destination(**data["destination"]),
-                scope=data["scope"],
+                destinations=tuple(Destination(**entry) for entry in data["destinations"]),
                 imports=tuple(
                     ImportOp(
                         work_id=op["work_id"],
@@ -290,6 +318,8 @@ class ChangePlan:
                         file=FileRef(**op["file"]),
                         staged_name=op["staged_name"],
                         members=tuple(op["members"]),
+                        destination=op["destination"],
+                        also=tuple(op.get("also", [])),
                     )
                     for op in data.get("imports", [])
                 ),

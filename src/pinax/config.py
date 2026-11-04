@@ -1,18 +1,22 @@
 """
 Configuration of one reconciliation, read from a YAML file.
 
-One file declares the folder of sources, the library and its collections, the parameters of the
-matching, and the files of resolutions and corrections. The file is merged over the defaults
-shipped with the package, `defaults.yml`, which hold every optional key; the code holds no default
-value. Relative paths resolve against the directory of the configuration file, never against the
-current directory.
+One file declares the folder of sources, the destination collection of each of its folders, the
+library, the parameters of the matching, and the files of resolutions and corrections. The file is
+merged over the defaults shipped with the package, `defaults.yml`, which hold every optional key;
+the code holds no default value. Relative paths resolve against the directory of the configuration
+file, never against the current directory.
 
 Classes
 -------
 SourcesConfig
     Folder of reference files and the part of each PDF that is read.
+CollectionRef
+    Collection of the library, named by its key or by its path.
+Target
+    Folder of the sources and the collection that receives its items.
 LibraryConfig
-    Endpoints of the Zotero desktop application and the collections of the reconciliation.
+    Endpoints of the Zotero desktop application.
 MatchingConfig
     Thresholds of the matching and of the confirmation by title.
 Config
@@ -32,7 +36,7 @@ load_config(path) -> Config
 
 from dataclasses import dataclass, fields
 from importlib import resources
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, get_origin
 
 import yaml
@@ -53,9 +57,7 @@ class SourcesConfig:
     Attributes
     ----------
     root : Path
-        Directory whose sub-folders hold the files.
-    folders : tuple[str, ...]
-        Sub-folders to inventory, relative to `root`; empty for every file under `root`.
+        Directory whose folders hold the files; the targets name folders relative to it.
     ignore : tuple[str, ...]
         File names skipped by the inventory.
     pages : int
@@ -65,16 +67,64 @@ class SourcesConfig:
     """
 
     root: Path
-    folders: tuple[str, ...]
     ignore: tuple[str, ...]
     pages: int
     names: tuple[NameTemplate, ...]
 
 
 @dataclass(frozen=True)
+class CollectionRef:
+    """
+    Collection of the library, named by its key or by its path.
+
+    A path is resolved against the snapshot when the plan is built, so that a collection can be
+    named as the researcher sees it.
+
+    Attributes
+    ----------
+    key : str
+        Eight-character key of the local API, empty when the path names the collection.
+    path : str
+        Names from the top level joined by `/`, such as `Review/Methods`, empty when the key names
+        the collection.
+    """
+
+    key: str
+    path: str
+
+    def __str__(self) -> str:
+        return f"key {self.key}" if self.key else f"path {self.path}"
+
+
+@dataclass(frozen=True)
+class Target:
+    """
+    Folder of the sources and the collection that receives its items.
+
+    Attributes
+    ----------
+    folder : str
+        Folder relative to the root of the sources, `.` for the root itself. A file belongs to the
+        target with the longest folder that contains it.
+    destination : CollectionRef
+        Collection receiving the filed and imported items of the folder.
+    scope : CollectionRef | None
+        Collection whose sub-tree counts as filed; None for the destination.
+    """
+
+    folder: str
+    destination: CollectionRef
+    scope: CollectionRef | None
+
+    def contains(self, folder: str) -> bool:
+        """Whether a folder relative to the root lies in the folder of the target."""
+        return self.folder == "." or folder == self.folder or folder.startswith(self.folder + "/")
+
+
+@dataclass(frozen=True)
 class LibraryConfig:
     """
-    Endpoints of the Zotero desktop application and the collections of the reconciliation.
+    Endpoints of the Zotero desktop application.
 
     Attributes
     ----------
@@ -82,21 +132,10 @@ class LibraryConfig:
         Base URL of the desktop application; only loopback hosts are accepted.
     storage : Path
         Storage directory holding one sub-directory per attachment key.
-    destination : str
-        Key of the collection that receives filed and imported items.
-    scope : str
-        Key of the collection whose sub-tree counts as filed; defaults to `destination`.
     """
 
-    destination: str
     api: str
     storage: Path
-    scope: str = ""
-
-    @property
-    def scope_key(self) -> str:
-        """Key of the collection whose sub-tree counts as filed."""
-        return self.scope or self.destination
 
 
 @dataclass(frozen=True)
@@ -170,7 +209,7 @@ class MatchingConfig:  # pylint: disable=too-many-instance-attributes
 
 
 @dataclass(frozen=True)
-class Config:
+class Config:  # pylint: disable=too-many-instance-attributes
     """
     Complete configuration.
 
@@ -180,8 +219,10 @@ class Config:
         Directory receiving the artifacts of every stage.
     sources : SourcesConfig
         Folder of reference files.
+    targets : tuple[Target, ...]
+        Folders of the sources and their collections, at least one.
     library : LibraryConfig
-        Zotero endpoints and collections.
+        Zotero endpoints.
     matching : MatchingConfig
         Matching thresholds.
     resolutions : Path | None
@@ -194,6 +235,7 @@ class Config:
 
     workspace: Path
     sources: SourcesConfig
+    targets: tuple[Target, ...]
     library: LibraryConfig
     matching: MatchingConfig
     resolutions: Path | None
@@ -255,7 +297,7 @@ def _typed(value: Any, expected: Any, name: str) -> Any:
 
 def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
     """Validated section `sources`."""
-    _reject_unknown(data, {"root", "folders", "ignore", "pages", "names"}, "sources")
+    _reject_unknown(data, {"root", "ignore", "pages", "names"}, "sources")
     pages = data.get("pages")
     if not isinstance(pages, int) or isinstance(pages, bool) or pages < 1:
         raise ConfigError("sources.pages must be a positive integer")
@@ -264,7 +306,6 @@ def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
         raise ConfigError("sources.names must list at least one template")
     return SourcesConfig(
         root=_path(data.get("root"), base, "sources.root"),
-        folders=_strings(data.get("folders"), "sources.folders"),
         ignore=_strings(data.get("ignore"), "sources.ignore"),
         pages=pages,
         names=tuple(compile_template(text) for text in names),
@@ -273,22 +314,63 @@ def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
 
 def _library(data: dict[str, Any], base: Path) -> LibraryConfig:
     """Validated section `library`."""
-    _reject_unknown(data, {"api", "storage", "destination", "scope"}, "library")
-    destination = data.get("destination")
-    if not isinstance(destination, str) or not destination:
-        raise ConfigError("library.destination must be a collection key")
-    scope = data.get("scope", "")
-    if not isinstance(scope, str):
-        raise ConfigError("library.scope must be a collection key")
+    _reject_unknown(data, {"api", "storage"}, "library")
     api = data.get("api")
     if not isinstance(api, str):
         raise ConfigError("library.api must be a URL")
     return LibraryConfig(
-        destination=destination,
-        api=api.rstrip("/"),
-        storage=_path(data.get("storage"), base, "library.storage"),
-        scope=scope,
+        api=api.rstrip("/"), storage=_path(data.get("storage"), base, "library.storage")
     )
+
+
+def _collection(value: Any, where: str) -> CollectionRef:
+    """Collection named by exactly one of the keys `key` and `path`."""
+    data = _mapping(value, where)
+    _reject_unknown(data, {"key", "path"}, where)
+    named = [name for name in ("key", "path") if data.get(name)]
+    if len(named) != 1 or not all(isinstance(data[name], str) for name in named):
+        raise ConfigError(f"{where} must hold exactly one of `key` and `path`, as a string")
+    key, path = str(data.get("key") or ""), str(data.get("path") or "").strip("/")
+    return CollectionRef(key=key, path=path)
+
+
+def _folder(value: Any, root: Path, where: str) -> str:
+    """Folder relative to the root, `.` for the root; an absolute folder must lie under it."""
+    if not isinstance(value, str) or not value:
+        raise ConfigError(f"{where} must be a non-empty path")
+    path = Path(value).expanduser()
+    if path.is_absolute():
+        if not path.is_relative_to(root):
+            raise ConfigError(f"{where} lies outside sources.root: {value}")
+        path = path.relative_to(root)
+    folder = PurePosixPath(path.as_posix())
+    if ".." in folder.parts:
+        raise ConfigError(f"{where} must not climb above sources.root: {value}")
+    return str(folder)
+
+
+def _targets(value: Any, root: Path) -> tuple[Target, ...]:
+    """Validated list `targets`: at least one target, each folder named once."""
+    if not isinstance(value, list) or not value:
+        raise ConfigError("targets must list at least one folder and its destination")
+    targets = []
+    for index, entry in enumerate(value):
+        where = f"targets[{index}]"
+        data = _mapping(entry, where)
+        _reject_unknown(data, {"folder", "destination", "scope"}, where)
+        scope = data.get("scope")
+        targets.append(
+            Target(
+                folder=_folder(data.get("folder"), root, f"{where}.folder"),
+                destination=_collection(data.get("destination"), f"{where}.destination"),
+                scope=None if scope is None else _collection(scope, f"{where}.scope"),
+            )
+        )
+    folders = [target.folder for target in targets]
+    repeated = sorted({folder for folder in folders if folders.count(folder) > 1})
+    if repeated:
+        raise ConfigError(f"folders named by several targets: {", ".join(repeated)}")
+    return tuple(targets)
 
 
 def load_defaults() -> dict[str, Any]:
@@ -386,11 +468,14 @@ def load_config(path: Path) -> Config:
     """
     data = effective_data(path)
     base = path.resolve().parent
-    known = {"workspace", "sources", "library", "matching", "resolutions", "corrections", "staging"}
+    known = {"workspace", "sources", "targets", "library", "matching"}
+    known |= {"resolutions", "corrections", "staging"}
     _reject_unknown(data, known, str(path))
+    sources = _sources(_mapping(data["sources"], "sources"), base)
     return Config(
         workspace=_path(data["workspace"], base, "workspace"),
-        sources=_sources(_mapping(data["sources"], "sources"), base),
+        sources=sources,
+        targets=_targets(data.get("targets"), sources.root),
         library=_library(_mapping(data["library"], "library"), base),
         matching=MatchingConfig.from_mapping(_mapping(data["matching"], "matching")),
         resolutions=_optional_path(data["resolutions"], base, "resolutions"),

@@ -79,7 +79,7 @@ class HeaderUnit:
             "// The preflight stops before any write when a target is missing. Every step skips\n"
             "// what is already done, so a second run changes nothing. The script returns its\n"
             "// action log as JSON: save it beside the plan.\n"
-            f"// Destination: {plan.destination.path} ({plan.destination.key}).\n"
+            + "".join(f"// Destination: {d.path} ({d.key}).\n" for d in plan.destinations)
         )
 
 
@@ -96,15 +96,20 @@ class ContextUnit:
 
 
 class LogUnit:
-    """Action log: one record per step, with the operation, the item, the outcome and a detail."""
+    """
+    Action log: one record per step.
+
+    A record holds the operation, the item, the outcome, a detail and, for a filing, the key of the
+    collection.
+    """
 
     def render(self, plan: ChangePlan) -> str:
         """Definitions of `log` and `record`."""
         del plan
         return (
             "const log = [];\n"
-            'const record = (op, item, outcome, detail = "") => '
-            "log.push({ op, item, outcome, detail });\n"
+            'const record = (op, item, outcome, detail = "", collection = "") => '
+            "log.push({ op, item, outcome, detail, collection });\n"
         )
 
 
@@ -112,7 +117,7 @@ class PreflightUnit:
     """
     Verification of every target before the first write.
 
-    The destination must exist under its key with its planned name, every item must exist outside
+    Every destination must exist under its key with its planned name, every item must exist outside
     the trash, every file to attach must exist, and every corrected field must be valid for the
     item type it is written to.
     """
@@ -120,19 +125,23 @@ class PreflightUnit:
     def render(self, plan: ChangePlan) -> str:
         """Preflight fragment; it throws, which stops the script, when a check fails."""
         files = [op.file.path for op in plan.attachments]
-        destination = {"key": plan.destination.key, "name": plan.destination.name}
+        destinations = [{"key": d.key, "name": d.name} for d in plan.destinations]
         fields = [
             {"item": op.item, "itemType": op.item_type, "fields": sorted(op.fields)}
             for op in plan.corrections
         ]
         return (
-            f"const DESTINATION = {literal(destination)};\n"
+            f"const DESTINATIONS = {literal(destinations)};\n"
             f"const TARGET_ITEMS = {literal(plan.script_items())};\n"
             f"const TARGET_FILES = {literal(files)};\n"
             f"const TARGET_FIELDS = {literal(fields)};\n"
-            "const destination = Zotero.Collections.getByLibraryAndKey(lib, DESTINATION.key);\n"
-            "if (!destination || destination.deleted || destination.name !== DESTINATION.name) {\n"
-            "  throw new Error(`destination ${DESTINATION.key} '${DESTINATION.name}' not found`);\n"
+            "const collections = {};\n"
+            "for (const { key, name } of DESTINATIONS) {\n"
+            "  const collection = Zotero.Collections.getByLibraryAndKey(lib, key);\n"
+            "  if (!collection || collection.deleted || collection.name !== name) {\n"
+            "    throw new Error(`destination ${key} '${name}' not found`);\n"
+            "  }\n"
+            "  collections[key] = collection;\n"
             "}\n"
             "const missingItems = TARGET_ITEMS.filter(key => {\n"
             "  const item = getItem(key);\n"
@@ -197,23 +206,25 @@ class AttachUnit:
 
 
 class FileUnit:
-    """Addition of each planned item to the destination, skipped when it is already there."""
+    """Addition of each planned item to its destination, skipped when it is already there."""
 
     def render(self, plan: ChangePlan) -> str:
         """Filing fragment, empty without filings."""
         if not plan.filings:
             return ""
+        data = [{"item": op.item, "destination": op.destination} for op in plan.filings]
         return (
-            f"const FILE = {literal([op.item for op in plan.filings])};\n"
-            "for (const key of FILE) {\n"
+            f"const FILE = {literal(data)};\n"
+            "for (const { item: key, destination } of FILE) {\n"
             "  const item = getItem(key);\n"
-            "  if (item.inCollection(destination.id)) {\n"
-            '    record("file", key, "skip", "already in the destination");\n'
+            "  const collection = collections[destination];\n"
+            "  if (item.inCollection(collection.id)) {\n"
+            '    record("file", key, "skip", "already in the destination", destination);\n'
             "    continue;\n"
             "  }\n"
-            "  item.addToCollection(destination.id);\n"
+            "  item.addToCollection(collection.id);\n"
             "  await item.saveTx();\n"
-            '  record("file", key, "done");\n'
+            '  record("file", key, "done", "", destination);\n'
             "}\n"
         )
 

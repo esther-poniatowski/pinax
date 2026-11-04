@@ -35,6 +35,11 @@ from pinax.plans.model import (
 )
 
 DEST = "DEST0001"
+OTHER_DEST = "DEST0002"
+DESTINATIONS = (
+    Destination(DEST, "background", "background", DEST, "background"),
+    Destination(OTHER_DEST, "methods", "methods", OTHER_DEST, "methods"),
+)
 TITLE = "Temporal dynamics of attention in a recurrent network model"
 
 
@@ -43,9 +48,11 @@ def _ref(path: Path) -> FileRef:
     return FileRef(str(path), digests.sha256, digests.md5, digests.size)
 
 
-def _import(work_id: str, path: Path, members: tuple[str, ...] = ()) -> ImportOp:
+def _import(
+    work_id: str, path: Path, members: tuple[str, ...] = (), also: tuple[str, ...] = ()
+) -> ImportOp:
     ref = _ref(path)
-    return ImportOp(work_id, "", ref, path.name, members or (ref.sha256,))
+    return ImportOp(work_id, "", ref, path.name, members or (ref.sha256,), DEST, also)
 
 
 def _checker(lib: Library, storage: Storage, reader: FakeReader) -> PlanChecker:
@@ -100,16 +107,17 @@ def test_checks_of_imports(tmp_path: Path, storage: Storage) -> None:
         ],
         [api_collection(DEST, "background")],
     )
-    plan = ChangePlan(
-        Destination(DEST, "background", "background"),
-        DEST,
-        imports=tuple(_import(name, files[name]) for name in files),
-    )
+    imports = [_import(name, files[name]) for name in files]
+    imports[0] = _import("good", files["good"], also=(OTHER_DEST,))
+    plan = ChangePlan(DESTINATIONS, imports=tuple(imports))
     results = _checker(lib, storage, reader).check(plan).results
-    assert _results(results, "good") == [("pass", "held by GOOD0001")]
+    assert _results(results, "good") == [
+        ("pass", "held by GOOD0001"),
+        ("note", "the next plan files GOOD0001 into methods"),
+    ]
     merged = _results(results, "merged")
     assert ("pass", "held by NEWMERG1") in merged
-    assert ("fail", "NEWMERG1 is not in the destination") in merged
+    assert ("fail", "NEWMERG1 is not in background") in merged
     assert ("note", "NEWMERG1 (journalArticle) lacks date, venue, creators") in merged
     assert _results(results, "alone")[0][0] == "fail"
     assert "metadata retrieval failed" in _results(results, "alone")[0][1]
@@ -139,10 +147,13 @@ def test_checks_of_attachments_filings_and_corrections(tmp_path: Path, storage: 
     )
     ref = _ref(source)
     plan = ChangePlan(
-        Destination(DEST, "background", "background"),
-        DEST,
+        DESTINATIONS,
         attachments=tuple(AttachOp(k, "", "", ref) for k in ("SAME0001", "OTHER001", "NONE0001")),
-        filings=(FileOp("SAME0001", "", ""), FileOp("NONE0001", "", "")),
+        filings=(
+            FileOp("SAME0001", "", "", DEST),
+            FileOp("SAME0001", "", "", OTHER_DEST),
+            FileOp("NONE0001", "", "", DEST),
+        ),
         corrections=(
             CorrectOp(
                 "CHAP0001",
@@ -155,7 +166,8 @@ def test_checks_of_attachments_filings_and_corrections(tmp_path: Path, storage: 
         ),
     )
     results = _checker(lib, storage, FakeReader()).check(plan).results
-    outcomes = {(r.operation, r.target): r.outcome for r in results}
+    outcomes = {(r.operation, r.target): r.outcome for r in results if "methods" not in r.detail}
+    assert ("fail", "SAME0001 not in methods") in _results(results, "SAME0001")
     assert outcomes[("attach", "SAME0001")] is Outcome.PASS
     assert outcomes[("attach", "OTHER001")] is Outcome.NOTE
     assert outcomes[("attach", "NONE0001")] is Outcome.FAIL
@@ -166,12 +178,17 @@ def test_checks_of_attachments_filings_and_corrections(tmp_path: Path, storage: 
     log = [
         {"op": "attach", "item": "SAME0001", "outcome": "done"},
         {"op": "attach", "item": "OTHER001", "outcome": "skip"},
-        {"op": "file", "item": "SAME0001", "outcome": "skip"},
+        {"op": "file", "item": "SAME0001", "outcome": "skip", "collection": DEST},
+        {"op": "file", "item": "SAME0001", "outcome": "done", "collection": OTHER_DEST},
     ]
     logged = {(r.target, r.outcome) for r in check_log(plan, log)}
     assert ("OTHER001", Outcome.NOTE) in logged
     assert ("NONE0001", Outcome.FAIL) in logged
     assert ("SAME0001", Outcome.FAIL) not in logged
+    unrecorded = check_log(plan, log[:-1])
+    assert [(r.target, r.outcome) for r in unrecorded if r.target == "SAME0001"] == [
+        ("SAME0001", Outcome.FAIL)
+    ]
 
 
 def test_evidence_routes_and_reference_lists(sources: SourceTree, storage: Storage) -> None:
@@ -197,8 +214,7 @@ def test_evidence_routes_and_reference_lists(sources: SourceTree, storage: Stora
         ]
     )
     plan = ChangePlan(
-        Destination(DEST, "b", "b"),
-        DEST,
+        DESTINATIONS,
         imports=(
             _import("doi:10.5555/w", imported_a, (sha["new-a.pdf"], sha["new-b.pdf"])),
             _import("sha256:deleted", deleted_copy),

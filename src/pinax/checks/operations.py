@@ -89,7 +89,7 @@ class PlanChecker:
         for attach in plan.attachments:
             report.results.append(self._attach(attach))
         for filing in plan.filings:
-            report.results.append(self._file(filing, plan.destination.key))
+            report.results.append(self._file(filing, plan))
         for correction in plan.corrections:
             report.results.append(self._correct(correction))
         return report
@@ -106,7 +106,7 @@ class PlanChecker:
         plan: ChangePlan,
         new_parents: dict[str, str],
     ) -> list[CheckResult]:
-        """Checks of one import: its item, its destination, and its record."""
+        """Checks of one import: its item, its destination, its record, and its later filings."""
         if attachment is None:
             return [
                 CheckResult(
@@ -124,10 +124,19 @@ class PlanChecker:
                 )
             ]
         results = [CheckResult("import", op.work_id, Outcome.PASS, f"held by {parent.key}")]
-        if plan.destination.key not in parent.collections:
+        if op.destination not in parent.collections:
+            path = plan.destination(op.destination).path
+            results.append(
+                CheckResult("import", op.work_id, Outcome.FAIL, f"{parent.key} is not in {path}")
+            )
+        later = [plan.destination(key).path for key in op.also if key not in parent.collections]
+        if later:
             results.append(
                 CheckResult(
-                    "import", op.work_id, Outcome.FAIL, f"{parent.key} is not in the destination"
+                    "import",
+                    op.work_id,
+                    Outcome.NOTE,
+                    f"the next plan files {parent.key} into {", ".join(later)}",
                 )
             )
         if parent.key in new_parents:
@@ -228,14 +237,15 @@ class PlanChecker:
             return CheckResult("attach", op.item, Outcome.PASS, f"{item.key} holds the file")
         return CheckResult("attach", op.item, Outcome.NOTE, f"{item.key} holds another PDF")
 
-    def _file(self, op: FileOp, destination: str) -> CheckResult:
-        """Check that the item lies directly in the destination."""
+    def _file(self, op: FileOp, plan: ChangePlan) -> CheckResult:
+        """Check that the item lies directly in its destination."""
+        path = plan.destination(op.destination).path
         item = self._library.survivor(op.item)
         if item is None:
             return CheckResult("file", op.item, Outcome.FAIL, "item missing")
-        if destination in item.collections:
-            return CheckResult("file", op.item, Outcome.PASS, f"{item.key} in the destination")
-        return CheckResult("file", op.item, Outcome.FAIL, f"{item.key} not in the destination")
+        if op.destination in item.collections:
+            return CheckResult("file", op.item, Outcome.PASS, f"{item.key} in {path}")
+        return CheckResult("file", op.item, Outcome.FAIL, f"{item.key} not in {path}")
 
     def _correct(self, op: CorrectOp) -> CheckResult:
         """Check that the type, fields, carried fields and creators hold their planned values."""
@@ -280,15 +290,21 @@ def check_log(plan: ChangePlan, entries: Sequence[Mapping[str, Any]]) -> list[Ch
     -------
     list[CheckResult]
         A failure for each operation without a `done` or `skip` record, and a note for each
-        skipped attachment, whose item held a PDF when the script ran.
+        skipped attachment, whose item held a PDF when the script ran. A filing is recorded with
+        the key of its collection, since one item may be filed into several destinations.
     """
-    logged = {(str(e.get("op")), str(e.get("item"))): str(e.get("outcome")) for e in entries}
-    expected = [("attach", op.item) for op in plan.attachments]
-    expected += [("file", op.item) for op in plan.filings]
-    expected += [("correct", op.item) for op in plan.corrections]
+    logged = {
+        (str(e.get("op")), str(e.get("item")), str(e.get("collection") or "")): str(
+            e.get("outcome")
+        )
+        for e in entries
+    }
+    expected = [("attach", op.item, "") for op in plan.attachments]
+    expected += [("file", op.item, op.destination) for op in plan.filings]
+    expected += [("correct", op.item, "") for op in plan.corrections]
     results = []
-    for operation, item in expected:
-        outcome = logged.get((operation, item))
+    for operation, item, collection in expected:
+        outcome = logged.get((operation, item, collection))
         if outcome not in ("done", "skip"):
             results.append(CheckResult("log", item, Outcome.FAIL, f"no record of {operation}"))
         elif operation == "attach" and outcome == "skip":

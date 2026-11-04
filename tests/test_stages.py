@@ -42,7 +42,8 @@ def test_stages_from_inventory_to_export(
     config_path = tmp_path / "pinax.yml"
     config_path.write_text(
         f"workspace: ws\nsources: {{root: {sources.root}}}\n"
-        f"library: {{destination: BACKGR01, scope: REVIEW01, storage: {storage.root}}}\n",
+        "targets: [{folder: refs, destination: {path: review/bg}, scope: {key: REVIEW01}}]\n"
+        f"library: {{storage: {storage.root}}}\n",
         encoding="utf-8",
     )
     config = load_config(config_path)
@@ -58,7 +59,7 @@ def test_stages_from_inventory_to_export(
     assert [op.item for op in plan.filings] == ["OLDITEM1"]
     assert [op.staged_name for op in plan.imports] == ["2020_Roe_learning.pdf"]
     folder, count = stages.stage_imports(config)
-    assert count == 1 and (folder / "2020_Roe_learning.pdf").is_file()
+    assert count == 1 and (folder / "BACKGR01 bg" / "2020_Roe_learning.pdf").is_file()
     assert "const ATTACH" in stages.write_script(config).read_text(encoding="utf-8")
 
     storage.store(
@@ -106,7 +107,9 @@ def test_cli_reports_missing_artifacts_and_invalid_configs(tmp_path: Path) -> No
     assert result.exit_code == EXIT_ERROR
     assert "configuration file not found" in result.output
     config = tmp_path / "pinax.yml"
-    config.write_text("sources: {root: s}\nlibrary: {destination: D}\n", encoding="utf-8")
+    config.write_text(
+        "sources: {root: s}\ntargets: [{folder: ., destination: {key: D}}]\n", encoding="utf-8"
+    )
     result = runner.invoke(app, ["script", "--config", str(config)])
     assert result.exit_code == EXIT_ERROR
     assert "run `pinax plan` first" in result.output
@@ -115,7 +118,8 @@ def test_cli_reports_missing_artifacts_and_invalid_configs(tmp_path: Path) -> No
 def test_cli_prints_the_configuration_merged_over_the_defaults(tmp_path: Path) -> None:
     config = tmp_path / "pinax.yml"
     config.write_text(
-        "sources: {root: s}\nlibrary: {destination: D}\nmatching: {title_words: 6}\n",
+        "sources: {root: s}\ntargets: [{folder: ., destination: {key: D}}]\n"
+        "matching: {title_words: 6}\n",
         encoding="utf-8",
     )
     result = CliRunner().invoke(app, ["config", "--config", str(config)])

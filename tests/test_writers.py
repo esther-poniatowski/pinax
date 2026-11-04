@@ -30,12 +30,16 @@ MOCK = Path(__file__).with_name("zotero_mock.js")
 pytestmark = pytest.mark.skipif(NODE is None, reason="Node.js is not installed")
 
 FILE = "/synthetic/source/paper.pdf"
-DESTINATION = Destination("DEST0001", "background", "review/background")
+DESTINATION = Destination("DEST0001", "background", "review/background", "DEST0001", "review")
+SECOND = Destination("DEST0002", "methods", "review/methods", "DEST0002", "review/methods")
 
 
 def _state(**overrides: Any) -> dict[str, Any]:
     state: dict[str, Any] = {
-        "collections": {"DEST0001": {"id": 7, "name": "background"}},
+        "collections": {
+            "DEST0001": {"id": 7, "name": "background"},
+            "DEST0002": {"id": 8, "name": "methods"},
+        },
         "items": {
             "ATTACH01": {"itemType": "journalArticle", "fields": {"title": "T1"}},
             "FILE0001": {"itemType": "journalArticle", "fields": {"title": "T2"}},
@@ -52,10 +56,9 @@ def _state(**overrides: Any) -> dict[str, Any]:
 
 def _plan(**overrides: Any) -> ChangePlan:
     fields: dict[str, Any] = {
-        "destination": DESTINATION,
-        "scope": "DEST0001",
+        "destinations": (DESTINATION,),
         "attachments": (AttachOp("ATTACH01", "k1", "T1", FileRef(FILE, "0" * 64, "0" * 32, 1)),),
-        "filings": (FileOp("FILE0001", "k2", "T2"),),
+        "filings": (FileOp("FILE0001", "k2", "T2", "DEST0001"),),
         "corrections": (
             CorrectOp(
                 "CHAPTER1",
@@ -120,6 +123,11 @@ def test_script_applies_the_plan_then_skips_on_a_second_run(tmp_path: Path) -> N
     ("state", "plan", "message"),
     [
         (_state(collections={"DEST0001": {"id": 7, "name": "renamed"}}), _plan(), "destination"),
+        (
+            _state(collections={"DEST0001": {"id": 7, "name": "background"}}),
+            _plan(destinations=(DESTINATION, SECOND)),
+            "destination DEST0002 'methods' not found",
+        ),
         (_state(files=[]), _plan(), "files not found"),
         (
             _state(
@@ -145,6 +153,24 @@ def test_preflight_stops_before_any_write(
     assert message in result["runs"][0]["error"]
     assert result["state"]["ATTACH01"]["attachments"] == []
     assert result["state"]["CHAPTER1"]["itemType"] == "journalArticle"
+
+
+def test_one_item_is_filed_into_each_of_its_destinations(tmp_path: Path) -> None:
+    filings = (
+        FileOp("FILE0001", "k2", "T2", "DEST0001"),
+        FileOp("FILE0001", "k2", "T2", "DEST0002"),
+    )
+    plan = _plan(
+        destinations=(DESTINATION, SECOND), attachments=(), filings=filings, corrections=()
+    )
+    result = _run(tmp_path, plan, _state())
+    first, second = result["runs"]
+    assert [(e["op"], e["collection"], e["outcome"]) for e in first["log"][1:]] == [
+        ("file", "DEST0001", "done"),
+        ("file", "DEST0002", "done"),
+    ]
+    assert {e["outcome"] for e in second["log"][1:]} == {"skip"}
+    assert sorted(result["state"]["FILE0001"]["collections"]) == [7, 8]
 
 
 def test_units_without_operations_render_nothing() -> None:

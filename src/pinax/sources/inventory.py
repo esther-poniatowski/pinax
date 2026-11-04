@@ -17,11 +17,11 @@ Inventory
 
 Functions
 ---------
-build_inventory(config, reader) -> Inventory
-    Read the folder and build its inventory.
+build_inventory(config, folders, reader) -> Inventory
+    Read the folders and build their inventory.
 """
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -185,25 +185,30 @@ class Inventory:
         return cls(Path(data["root"]), files, data.get("pages", {}))
 
 
-def _walk(config: SourcesConfig) -> Iterator[Path]:
-    """Files under the configured folders, in path order, without the ignored names."""
-    bases = [config.root / folder for folder in config.folders] or [config.root]
-    for base in bases:
+def _walk(config: SourcesConfig, folders: Sequence[str]) -> Iterator[Path]:
+    """Files under the folders, each once and in path order, without the ignored names."""
+    found: set[Path] = set()
+    for folder in folders:
+        base = config.root / folder
         if not base.is_dir():
             raise ArtifactError(f"source folder not found: {base}")
-        for path in sorted(base.rglob("*")):
-            if path.is_file() and path.name not in config.ignore:
-                yield path
+        found.update(
+            path for path in base.rglob("*") if path.is_file() and path.name not in config.ignore
+        )
+    yield from sorted(found)
 
 
-def build_inventory(config: SourcesConfig, reader: PdfReader) -> Inventory:
+def build_inventory(config: SourcesConfig, folders: Sequence[str], reader: PdfReader) -> Inventory:
     """
-    Read the folder and build its inventory.
+    Read the folders and build their inventory.
 
     Parameters
     ----------
     config : SourcesConfig
-        Root, folders and number of pages.
+        Root, ignored names and number of pages.
+    folders : Sequence[str]
+        Folders relative to the root, `.` for the root; a file under two nested folders is
+        recorded once.
     reader : PdfReader
         Extraction of text and title.
 
@@ -214,7 +219,7 @@ def build_inventory(config: SourcesConfig, reader: PdfReader) -> Inventory:
     """
     files: list[SourceFile] = []
     pages: dict[str, list[str]] = {}
-    for path in _walk(config):
+    for path in _walk(config, folders):
         digests = digest_file(path)
         doi, title = "", ""
         if path.suffix.lower() == ".pdf":

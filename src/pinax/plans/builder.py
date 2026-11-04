@@ -10,6 +10,7 @@ PlanBuilder
 from collections.abc import Iterable, Sequence
 from pathlib import PurePosixPath
 
+from pinax.config import Target
 from pinax.errors import PlanError
 from pinax.library.model import Item, Library
 from pinax.matching.model import Match, Status
@@ -24,7 +25,8 @@ from pinax.plans.model import (
     ImportOp,
     SkippedWork,
 )
-from pinax.sources.inventory import Content, Inventory
+from pinax.plans.targets import TargetMap
+from pinax.sources.inventory import Content, Inventory, SourceFile
 
 
 def _unique_name(name: str, taken: set[str]) -> str:
@@ -47,34 +49,24 @@ class PlanBuilder:
         Library snapshot taken before the change.
     inventory : Inventory
         Inventory of the sources.
-    destination : str
-        Key of the collection receiving filed and imported items.
-    scope : str
-        Key of the collection whose sub-tree counts as filed.
+    targets : Sequence[Target]
+        Folders of the sources and their collections.
 
     Raises
     ------
     PlanError
-        If the destination or the scope is not a collection of the library. A missing collection is
-        created by the researcher in Zotero; the plan never creates one.
+        If a collection of a target is missing or ambiguous. A missing collection is created by the
+        researcher in Zotero; the plan never creates one.
     """
 
-    def __init__(
-        self, library: Library, inventory: Inventory, destination: str, scope: str
-    ) -> None:
-        for key in (destination, scope):
-            if key not in library.collections:
-                raise PlanError(
-                    f"collection {key} is not in the library; create it in Zotero first"
-                )
+    def __init__(self, library: Library, inventory: Inventory, targets: Sequence[Target]) -> None:
         self._library = library
         self._inventory = inventory
-        self._destination = Destination(
-            key=destination,
-            name=library.collections[destination].name,
-            path=library.collection_path(destination),
-        )
-        self._scope = scope
+        self._targets = TargetMap(library, targets)
+
+    def _destinations(self, files: Iterable[SourceFile]) -> list[Destination]:
+        """Distinct destinations of the folders of some files, in file order."""
+        return list(dict.fromkeys(self._targets.destination(file.folder) for file in files))
 
     def _file_ref(self, content: Content) -> FileRef:
         """Reference to the first PDF file of a content."""
@@ -111,19 +103,21 @@ class PlanBuilder:
         return ops
 
     def _filings(self, matches: Sequence[Match]) -> list[FileOp]:
-        """Matched and preprint items outside the scope."""
-        keys = [
-            self._item(match.item).key
-            for match in matches
-            if match.status in (Status.MATCHED, Status.PREPRINT_OF)
-        ]
+        """Matched and preprint items outside the scope of a destination of their folders."""
+        pairs: dict[tuple[str, str], Destination] = {}
+        for match in matches:
+            if match.status not in (Status.MATCHED, Status.PREPRINT_OF):
+                continue
+            key = self._item(match.item).key
+            for dest in self._destinations(self._inventory.contents[match.sha256].files):
+                pairs.setdefault((key, dest.key), dest)
         ops = []
-        for key in dict.fromkeys(keys):
+        for (key, _), dest in pairs.items():
             item = self._library.items[key]
-            if self._library.in_subtree(item, self._scope):
+            if self._library.in_subtree(item, dest.scope):
                 continue
             current = tuple(self._library.collection_path(c) for c in item.collections)
-            ops.append(FileOp(key, item.citation_key, item.title, current))
+            ops.append(FileOp(key, item.citation_key, item.title, dest.key, current))
         return ops
 
     def _imports(self, works: Iterable[Work]) -> tuple[list[ImportOp], list[SkippedWork]]:
@@ -137,14 +131,18 @@ class PlanBuilder:
             if representative is None:
                 skipped.append(SkippedWork(work.work_id, "no PDF file holds the work", files))
                 continue
-            name = next(f.name for f in representative.files if f.is_pdf)
+            pdf = next(f for f in representative.files if f.is_pdf)
+            destination = self._targets.destination(pdf.folder)
+            others = self._destinations(f for c in work.members for f in c.files)
             imports.append(
                 ImportOp(
                     work_id=work.work_id,
                     doi=work.doi,
                     file=self._file_ref(representative),
-                    staged_name=_unique_name(name, taken),
+                    staged_name=_unique_name(pdf.name, taken),
                     members=tuple(c.sha256 for c in work.members),
+                    destination=destination.key,
+                    also=tuple(d.key for d in others if d.key != destination.key),
                 )
             )
         return imports, skipped
@@ -170,9 +168,10 @@ class PlanBuilder:
         Returns
         -------
         ChangePlan
-            Imports of the absent works, attachments to matched items without a PDF, filings of
-            matched items outside the scope, and the corrections. A preprint never becomes the PDF
-            of the published item, so preprint matches only lead to filings.
+            Imports of the absent works, each into the destination of its imported file;
+            attachments to matched items without a PDF; filings of matched items outside the scope
+            of each destination of their folders; and the corrections. A preprint never becomes
+            the PDF of the published item, so preprint matches only lead to filings.
 
         Raises
         ------
@@ -191,8 +190,7 @@ class PlanBuilder:
         absent = [self._inventory.contents[m.sha256] for m in matches if m.status is Status.ABSENT]
         imports, skipped = self._imports(group_works(absent))
         return ChangePlan(
-            destination=self._destination,
-            scope=self._scope,
+            destinations=self._targets.destinations,
             imports=tuple(imports),
             attachments=tuple(self._attachments(matches)),
             filings=tuple(self._filings(matches)),

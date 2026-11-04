@@ -112,7 +112,8 @@ def compare_keys(config: Config, client: ZoteroClient, label: str) -> dict[str, 
 
 def make_inventory(config: Config, reader: PdfReader) -> Counter[str]:
     """Inventory the sources; returns the counts of files, contents and contents with a DOI."""
-    inventory = build_inventory(config.sources, reader)
+    folders = [target.folder for target in config.targets]
+    inventory = build_inventory(config.sources, folders, reader)
     write_json(_workspace(config).inventory, inventory.to_json())
     return Counter(
         files=len(inventory.files),
@@ -140,7 +141,7 @@ def make_plan(config: Config, label: str) -> ChangePlan:
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
     inventory = _inventory(workspace)
     matches = matches_from_json(read_json(workspace.require(workspace.matches, "match")))
-    builder = PlanBuilder(library, inventory, config.library.destination, config.library.scope_key)
+    builder = PlanBuilder(library, inventory, config.targets)
     plan = builder.build(matches, load_corrections(config.corrections))
     write_json(workspace.plan, plan.to_json())
     write_text(workspace.worklist, render_worklist(plan, _staging(config)))

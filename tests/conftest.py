@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pinax.config import MatchingConfig, SourcesConfig, load_defaults
+from pinax.config import CollectionRef, MatchingConfig, SourcesConfig, Target, load_defaults
 from pinax.library.model import Library
 from pinax.names import NameTemplate, compile_template
 from pinax.sources.inventory import Inventory, build_inventory
@@ -104,16 +104,27 @@ def name_templates(*texts: str) -> tuple[NameTemplate, ...]:
     return tuple(compile_template(text) for text in texts or load_defaults()["sources"]["names"])
 
 
-def sources_config(root: Path, folders: Sequence[str] = ()) -> SourcesConfig:
-    """Sources section of the shipped defaults for a root and its folders."""
+def sources_config(root: Path) -> SourcesConfig:
+    """Sources section of the shipped defaults for a root."""
     defaults = load_defaults()["sources"]
     return SourcesConfig(
-        root=root,
-        folders=tuple(folders),
-        ignore=tuple(defaults["ignore"]),
-        pages=defaults["pages"],
-        names=name_templates(),
+        root=root, ignore=tuple(defaults["ignore"]), pages=defaults["pages"], names=name_templates()
     )
+
+
+def by_key(key: str) -> CollectionRef:
+    """Collection named by its key."""
+    return CollectionRef(key=key, path="")
+
+
+def by_path(path: str) -> CollectionRef:
+    """Collection named by its path."""
+    return CollectionRef(key="", path=path)
+
+
+def target(folder: str, destination: str, scope: str | None = None) -> Target:
+    """Target naming its destination and its scope by key."""
+    return Target(folder, by_key(destination), None if scope is None else by_key(scope))
 
 
 def pdf_bytes(marker: str) -> bytes:
@@ -178,9 +189,9 @@ class SourceTree:
             self.reader.titles[data] = title
         return path
 
-    def inventory(self, folders: Sequence[str] = ()) -> Inventory:
-        """Inventory of the tree."""
-        return build_inventory(sources_config(self.root, folders), self.reader)
+    def inventory(self, folders: Sequence[str] = (".",)) -> Inventory:
+        """Inventory of the given folders of the tree, by default of the whole tree."""
+        return build_inventory(sources_config(self.root), folders, self.reader)
 
 
 @pytest.fixture(name="sources")
