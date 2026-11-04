@@ -71,9 +71,9 @@ def render_worklist(plan: ChangePlan, staging: Path) -> str:
         )
     if plan.imports:
         steps.append(
-            f"Open the staging folder with `open {shlex.quote(str(staging))}`. For each sub-folder, "
-            "select its collection in Zotero, then drag the files of the sub-folder, not the "
-            "folder, into the collection."
+            f"Open the staging folder with `open {shlex.quote(str(staging))}`. "
+            "For each sub-folder, select its collection in Zotero, then drag the files of the "
+            "sub-folder, not the folder, into the collection."
         )
     if plan.script_items():
         steps.append(

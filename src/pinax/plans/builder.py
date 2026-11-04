@@ -42,6 +42,15 @@ def _unique_name(name: str, taken: set[str]) -> str:
     return candidate
 
 
+def _pdfs_by_doi(contents: Iterable[Content]) -> dict[str, list[str]]:
+    """SHA-256 of the PDF contents carrying each DOI."""
+    pdfs: dict[str, list[str]] = {}
+    for content in contents:
+        if content.doi and any(file.is_pdf for file in content.files):
+            pdfs.setdefault(content.doi, []).append(content.sha256)
+    return pdfs
+
+
 class PlanBuilder:
     """
     Builds the plan of one reconciliation from an inventory, its matches and the library.
@@ -170,10 +179,7 @@ class PlanBuilder:
         sharing the DOI of a created work are returned as claimed: the plan does not import them,
         and the next plan attaches them to the created item.
         """
-        pdfs: dict[str, list[str]] = {}
-        for content in absent:
-            if content.doi and any(file.is_pdf for file in content.files):
-                pdfs.setdefault(content.doi, []).append(content.sha256)
+        pdfs = _pdfs_by_doi(absent)
         creations: list[CreateOp] = []
         skipped: list[SkippedWork] = []
         claimed: set[str] = set()
