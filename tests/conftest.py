@@ -13,7 +13,14 @@ from typing import Any
 
 import pytest
 
-from pinax.config import CollectionRef, MatchingConfig, SourcesConfig, Target, load_defaults
+from pinax.config import (
+    CollectionRef,
+    MatchingConfig,
+    RecordFiles,
+    SourcesConfig,
+    Target,
+    load_defaults,
+)
 from pinax.library.model import Library
 from pinax.names import NameTemplate, compile_template
 from pinax.sources.inventory import Inventory, build_inventory
@@ -108,7 +115,11 @@ def sources_config(root: Path) -> SourcesConfig:
     """Sources section of the shipped defaults for a root."""
     defaults = load_defaults()["sources"]
     return SourcesConfig(
-        root=root, ignore=tuple(defaults["ignore"]), pages=defaults["pages"], names=name_templates()
+        root=root,
+        ignore=tuple(defaults["ignore"]),
+        pages=defaults["pages"],
+        names=name_templates(),
+        records=tuple(RecordFiles(**entry) for entry in defaults["records"]),
     )
 
 

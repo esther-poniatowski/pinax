@@ -2,9 +2,9 @@
 Inventory of a folder of reference files.
 
 Each file is recorded with its digests, the DOI found on its first pages and the text of those
-pages. The name of a file is read by the matching, under the templates of the configuration. Files
-with identical bytes form one content, identified by its SHA-256: matching works on contents, and
-the exports return to files.
+pages; each record export contributes its records instead. The name of a file is read by the
+matching, under the templates of the configuration. Files with identical bytes form one content,
+identified by its SHA-256: matching works on contents, and the exports return to files.
 
 Classes
 -------
@@ -23,16 +23,19 @@ build_inventory(config, folders, reader) -> Inventory
 
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import asdict, dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Any
 
-from pinax.config import SourcesConfig
+from pinax.config import RecordFiles, SourcesConfig
 from pinax.errors import ArtifactError
 from pinax.hashing import digest_file
+from pinax.records.model import Record
+from pinax.records.readers import reader as record_reader
 from pinax.sources.pdf import PdfReader
 from pinax.text import find_doi
 
-INVENTORY_FORMAT = "pinax-inventory/2"
+INVENTORY_FORMAT = "pinax-inventory/3"
 
 
 @dataclass(frozen=True)
@@ -131,9 +134,16 @@ class Inventory:
         Text of the first pages by SHA-256.
     """
 
-    def __init__(self, root: Path, files: list[SourceFile], pages: Mapping[str, list[str]]) -> None:
+    def __init__(
+        self,
+        root: Path,
+        files: list[SourceFile],
+        pages: Mapping[str, list[str]],
+        records: Sequence[Record] = (),
+    ) -> None:
         self.root = root
         self.files = files
+        self.records = list(records)
         self.pages = dict(pages)
         grouped: dict[str, list[SourceFile]] = {}
         for file in files:
@@ -157,6 +167,7 @@ class Inventory:
             "root": str(self.root),
             "files": [asdict(file) for file in self.files],
             "pages": self.pages,
+            "records": [record.to_json() for record in self.records],
         }
 
     @classmethod
@@ -182,7 +193,8 @@ class Inventory:
         if not isinstance(data, dict) or data.get("format") != INVENTORY_FORMAT:
             raise ArtifactError(f"not an inventory of format {INVENTORY_FORMAT}")
         files = [SourceFile(**entry) for entry in data["files"]]
-        return cls(Path(data["root"]), files, data.get("pages", {}))
+        records = [Record.from_json(entry) for entry in data.get("records", [])]
+        return cls(Path(data["root"]), files, data.get("pages", {}), records)
 
 
 def _walk(config: SourcesConfig, folders: Sequence[str]) -> Iterator[Path]:
@@ -196,6 +208,13 @@ def _walk(config: SourcesConfig, folders: Sequence[str]) -> Iterator[Path]:
             path for path in base.rglob("*") if path.is_file() and path.name not in config.ignore
         )
     yield from sorted(found)
+
+
+def _record_format(name: str, patterns: Sequence[RecordFiles]) -> str:
+    """Format of the first pattern that a file name matches, ignoring case; empty for none."""
+    return next(
+        (entry.format for entry in patterns if fnmatch(name.lower(), entry.pattern.lower())), ""
+    )
 
 
 def build_inventory(config: SourcesConfig, folders: Sequence[str], reader: PdfReader) -> Inventory:
@@ -215,11 +234,23 @@ def build_inventory(config: SourcesConfig, folders: Sequence[str], reader: PdfRe
     Returns
     -------
     Inventory
-        Files in path order; the text of a content is extracted once.
+        Files and records in path order; the text of a content is extracted once. A file matching
+        a pattern of `config.records` contributes its records, and is not a reference file.
+
+    Raises
+    ------
+    ArtifactError
+        If a folder is missing, or an export holds an entry that its reader cannot read.
     """
     files: list[SourceFile] = []
     pages: dict[str, list[str]] = {}
+    records: list[Record] = []
     for path in _walk(config, folders):
+        relative = path.relative_to(config.root).as_posix()
+        record_format = _record_format(path.name, config.records)
+        if record_format:
+            records.extend(record_reader(record_format).read(path, relative))
+            continue
         digests = digest_file(path)
         doi, title = "", ""
         if path.suffix.lower() == ".pdf":
@@ -238,4 +269,4 @@ def build_inventory(config: SourcesConfig, folders: Sequence[str], reader: PdfRe
                 pdf_title=title,
             )
         )
-    return Inventory(config.root, files, pages)
+    return Inventory(config.root, files, pages, records)

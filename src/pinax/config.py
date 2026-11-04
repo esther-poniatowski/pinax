@@ -10,6 +10,8 @@ against the current directory; the folder of a target is relative to the root of
 
 Classes
 -------
+RecordFiles
+    Pattern of the names of record exports, and their format.
 SourcesConfig
     Folder of reference files and the part of each PDF that is read.
 CollectionRef
@@ -44,10 +46,28 @@ import yaml
 
 from pinax.errors import ConfigError
 from pinax.names import NameTemplate, compile_template
+from pinax.records.readers import formats
 from pinax.text import MIN_WORD_LENGTH, fold, words
 
 DEFAULTS = "defaults.yml"
 """Package resource holding the default of every optional key."""
+
+
+@dataclass(frozen=True)
+class RecordFiles:
+    """
+    Pattern of the names of record exports, and their format.
+
+    Attributes
+    ----------
+    pattern : str
+        Shell pattern matched against a file name, ignoring case, such as `*.bib`.
+    format : str
+        Name of the reader of the files, such as `bibtex`.
+    """
+
+    pattern: str
+    format: str
 
 
 @dataclass(frozen=True)
@@ -65,12 +85,16 @@ class SourcesConfig:
         Number of opening pages whose text is extracted.
     names : tuple[NameTemplate, ...]
         Syntaxes of the file names, tried in order by the match by name.
+    records : tuple[RecordFiles, ...]
+        Patterns of the record exports, the first matching pattern deciding the format; a file
+        that matches one is read as records, not as a reference file.
     """
 
     root: Path
     ignore: tuple[str, ...]
     pages: int
     names: tuple[NameTemplate, ...]
+    records: tuple[RecordFiles, ...]
 
 
 @dataclass(frozen=True)
@@ -304,7 +328,7 @@ def _typed(value: Any, expected: Any, name: str) -> Any:
 
 def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
     """Validated section `sources`."""
-    _reject_unknown(data, {"root", "ignore", "pages", "names"}, "sources")
+    _reject_unknown(data, {"root", "ignore", "pages", "names", "records"}, "sources")
     pages = data.get("pages")
     if not isinstance(pages, int) or isinstance(pages, bool) or pages < 1:
         raise ConfigError("sources.pages must be a positive integer")
@@ -316,7 +340,29 @@ def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
         ignore=_strings(data.get("ignore"), "sources.ignore"),
         pages=pages,
         names=tuple(compile_template(text) for text in names),
+        records=_record_files(data.get("records")),
     )
+
+
+def _record_files(value: Any) -> tuple[RecordFiles, ...]:
+    """Validated list `sources.records`; an empty list reads no file as records."""
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise ConfigError("sources.records must be a list of patterns and formats")
+    known = set(formats())
+    found = []
+    for index, entry in enumerate(value):
+        where = f"sources.records[{index}]"
+        data = _mapping(entry, where)
+        _reject_unknown(data, {"pattern", "format"}, where)
+        pattern, name = data.get("pattern"), data.get("format")
+        if not isinstance(pattern, str) or not pattern:
+            raise ConfigError(f"{where}.pattern must be a non-empty pattern")
+        if name not in known:
+            raise ConfigError(f"{where}.format must be one of {", ".join(sorted(known))}")
+        found.append(RecordFiles(pattern, str(name)))
+    return tuple(found)
 
 
 def _library(data: dict[str, Any], base: Path) -> LibraryConfig:
