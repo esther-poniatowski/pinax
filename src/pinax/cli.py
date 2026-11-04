@@ -202,12 +202,21 @@ def cli_create(
     limit: Annotated[
         int | None, typer.Option("--limit", min=1, help="Largest number of items to create.")
     ] = None,
+    reconciled: Annotated[
+        bool,
+        typer.Option(
+            "--reconciled",
+            help="State that the library was read and repaired after a failed or ambiguous run.",
+        ),
+    ] = False,
 ) -> None:
-    """Create the records of the plan through the connector, verifying each item."""
+    """Create the items of the plan from their records through the connector, verifying each."""
     settings = _load(config)
     api = settings.library.api
     try:
-        results = stages.create(settings, snapshot, ZoteroClient(api), Connector(api), limit)
+        results = stages.create(
+            settings, snapshot, ZoteroClient(api), Connector(api), limit, reconciled=reconciled
+        )
     except PinaxError as error:
         raise _fail(error) from error
     for result in results:

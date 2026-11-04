@@ -21,7 +21,7 @@ stage_imports(config) -> tuple[Path, int]
     Stage the files to import.
 write_script(config) -> Path
     Generate the Zotero script of the plan.
-create(config, label, client, connector, limit) -> list[Creation]
+create(config, label, client, connector, limit, reconciled) -> list[Creation]
     Create the items of the plan through the connector.
 check(config, label, reader, log) -> Report
     Check the plan against a snapshot taken after the change.
@@ -30,8 +30,9 @@ export(config, label, plans, header) -> tuple[Counter[str], dict[str, list[str]]
 """
 
 from collections import Counter
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from pathlib import Path
+import time
 from typing import Any
 
 from pinax.artifacts import read_json, write_json, write_text
@@ -42,7 +43,7 @@ from pinax.errors import LibraryError
 from pinax.exports.evidence import EvidenceBuilder, EvidenceRow, RecordRow, render_evidence
 from pinax.exports.references import DEFAULT_HEADER, render_references, shared_keys
 from pinax.library.client import ZoteroClient
-from pinax.library.connector import Connector, Creation, CreationRun, numeric_targets
+from pinax.library.connector import Connector, Creation, CreationRun, Outcome, numeric_targets
 from pinax.library.snapshot import load_snapshot, take_snapshot
 from pinax.library.storage import StorageIndex
 from pinax.matching.confirm import TitleConfirmer
@@ -176,7 +177,8 @@ def make_plan(config: Config, label: str) -> ChangePlan:
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
     inventory = _inventory(workspace)
     data = read_json(workspace.require(workspace.matches, "match"))
-    builder = PlanBuilder(library, inventory, config.targets)
+    confirmer = TitleConfirmer(config.matching.title_words, config.matching.reject_below)
+    builder = PlanBuilder(library, inventory, config.targets, confirmer=confirmer)
     plan = builder.build(
         matches_from_json(data),
         load_corrections(config.corrections),
@@ -203,35 +205,65 @@ def write_script(config: Config) -> Path:
     return workspace.script
 
 
-def create(
+def _unsettled(log_path: Path) -> str:
+    """Identity and outcome of a previous run that ended failed or ambiguous; empty otherwise."""
+    if not log_path.is_file():
+        return ""
+    log = read_json(log_path)
+    creations = log.get("creations", []) if isinstance(log, dict) else []
+    last = creations[-1] if creations else {}
+    if last.get("outcome") in (Outcome.FAILED.value, Outcome.AMBIGUOUS.value):
+        return f"{last["outcome"]} on {last.get("identity", "")}"
+    return ""
+
+
+def create(  # pylint: disable=too-many-arguments
     config: Config,
     label: str,
     client: ZoteroClient,
     connector: Connector,
     limit: int | None,
+    *,
+    reconciled: bool = False,
+    sleep: Callable[[float], None] = time.sleep,
 ) -> list[Creation]:
     """
     Create the items of the plan through the connector, one item per session.
 
     The connector is probed, and its answer recorded in the log, before any write; its targets are
-    read from the application and checked against the snapshot that the plan was built from. The
-    log holds the probe and the results, and is written after each item.
+    read from the application and checked against the snapshot named by `label`. The log holds the
+    probe and the results, and is written after each item.
+
+    The pause between two readings of a created item is `sleep`, which tests replace.
 
     Returns
     -------
     list[Creation]
         One result per creation attempted; the run stops at the first failure or ambiguous outcome.
+
+    Raises
+    ------
+    LibraryError
+        If the previous run ended failed or ambiguous and `reconciled` is false: a second run could
+        then miss the item of that run and create it again. The researcher first reads the
+        library, runs the checks and repairs the item.
     """
     workspace = _workspace(config)
     plan = _plan(workspace.require(workspace.plan, "plan"))
     if not plan.creations:
         return []
+    unsettled = _unsettled(workspace.creation_log)
+    if unsettled and not reconciled:
+        raise LibraryError(
+            f"the last creation run ended {unsettled}; take a new snapshot, run `pinax check`, "
+            "repair the item in Zotero, then run `pinax create --reconciled`"
+        )
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
     versions = connector.ping()
     if not isinstance(versions, dict):
         raise LibraryError(f"unexpected answer of the connector ping: {str(versions)[:120]}")
     targets = numeric_targets(connector.selected_collection(), library)
-    run = CreationRun(client, connector, targets)
+    run = CreationRun(client, connector, targets, sleep=sleep)
 
     def record(results: list[Creation]) -> None:
         log = {"connector": versions, "creations": [result.to_json() for result in results]}

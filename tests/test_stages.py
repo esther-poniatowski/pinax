@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+import pytest
 from typer.testing import CliRunner
 import yaml
 
@@ -20,6 +21,7 @@ from fake_zotero import FakeZotero
 from pinax import stages
 from pinax.cli import EXIT_ERROR, app
 from pinax.config import load_config
+from pinax.errors import LibraryError
 from pinax.library.client import ZoteroClient
 from pinax.library.connector import Connector
 
@@ -208,3 +210,30 @@ def test_records_from_export_to_creation_check_and_evidence(
         ("doe2001", "matched", "doe2001"),
         ("roe2020", "created", "made1"),
     ]
+
+
+def test_a_run_after_a_failure_waits_for_the_reconciliation(
+    tmp_path: Path, sources: SourceTree, storage: Storage
+) -> None:
+    sources.add("refs/refs.bib", RECORDS.encode())
+    zotero = FakeZotero(ignore_update=True)
+    config_path = tmp_path / "pinax.yml"
+    config_path.write_text(
+        f"workspace: ws\nsources: {{root: {sources.root}}}\n"
+        "targets: [{folder: refs, destination: {key: BACKGR01}}]\n"
+        f"library: {{storage: {storage.root}}}\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    _fake_snapshot(config.workspace / "library" / "current", zotero)
+    stages.make_inventory(config, sources.reader)
+    stages.match(config, "current")
+    assert len(stages.make_plan(config, "current").creations) == 2
+    client, connector = ZoteroClient(URL, zotero.transport), Connector(URL, zotero.transport)
+    first = stages.create(config, "current", client, connector, None, sleep=lambda _: None)
+    assert [r.outcome.value for r in first] == ["failed"]
+    with pytest.raises(LibraryError, match="ended failed on doi:10.5555/old"):
+        stages.create(config, "current", client, connector, None)
+    zotero.ignore_update = False
+    second = stages.create(config, "current", client, connector, None, reconciled=True)
+    assert [r.outcome.value for r in second] == ["exists", "created"]

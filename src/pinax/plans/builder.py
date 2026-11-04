@@ -13,7 +13,8 @@ from pathlib import PurePosixPath
 from pinax.config import Target
 from pinax.errors import PlanError
 from pinax.library.model import Item, Library
-from pinax.matching.model import Match, RecordMatch, Status
+from pinax.matching.confirm import TitleConfirmer
+from pinax.matching.model import Match, RecordMatch, Status, Verdict
 from pinax.matching.works import Work, group_works
 from pinax.plans.model import (
     AttachOp,
@@ -28,6 +29,7 @@ from pinax.plans.model import (
 )
 from pinax.plans.targets import TargetMap
 from pinax.records.items import connector_item
+from pinax.records.model import Record
 from pinax.records.works import RecordWork, group_records
 from pinax.sources.inventory import Content, Inventory
 
@@ -42,15 +44,6 @@ def _unique_name(name: str, taken: set[str]) -> str:
     return candidate
 
 
-def _pdfs_by_doi(contents: Iterable[Content]) -> dict[str, list[str]]:
-    """SHA-256 of the PDF contents carrying each DOI."""
-    pdfs: dict[str, list[str]] = {}
-    for content in contents:
-        if content.doi and any(file.is_pdf for file in content.files):
-            pdfs.setdefault(content.doi, []).append(content.sha256)
-    return pdfs
-
-
 class PlanBuilder:
     """
     Builds the plan of one reconciliation from an inventory, its matches and the library.
@@ -63,6 +56,9 @@ class PlanBuilder:
         Inventory of the sources.
     targets : Sequence[Target]
         Folders of the sources and their collections.
+    confirmer : TitleConfirmer
+        Confirmation of a title by the first pages of a PDF, which tells whether an absent PDF
+        holds the work of a record to create.
 
     Raises
     ------
@@ -71,10 +67,34 @@ class PlanBuilder:
         researcher in Zotero; the plan never creates one.
     """
 
-    def __init__(self, library: Library, inventory: Inventory, targets: Sequence[Target]) -> None:
+    def __init__(
+        self,
+        library: Library,
+        inventory: Inventory,
+        targets: Sequence[Target],
+        *,
+        confirmer: TitleConfirmer,
+    ) -> None:
         self._library = library
         self._inventory = inventory
         self._targets = TargetMap(library, targets)
+        self._confirmer = confirmer
+
+    def _claims(self, record: Record, pdfs: Sequence[Content], taken: set[str]) -> tuple[str, ...]:
+        """
+        Absent PDFs holding the work of a record: those whose first pages confirm its title, and
+        those carrying its DOI unless their pages reject its title, since a DOI on a first page
+        can belong to a cited work.
+        """
+        found = []
+        for content in pdfs:
+            if content.sha256 in taken:
+                continue
+            verdict, _ = self._confirmer.verdict(record.title, content.pages)
+            same_doi = bool(record.doi) and content.doi == record.doi
+            if verdict is Verdict.CONFIRMED or (same_doi and verdict is not Verdict.REJECTED):
+                found.append(content.sha256)
+        return tuple(found)
 
     def _destinations(self, folders: Iterable[str]) -> list[Destination]:
         """Distinct destinations of some folders of the sources, in folder order."""
@@ -176,10 +196,11 @@ class PlanBuilder:
         One creation per record work that no item holds, from its record with the most fields.
 
         A work that only DOIs describe is skipped, since a creation needs metadata. The absent PDFs
-        sharing the DOI of a created work are returned as claimed: the plan does not import them,
-        and the next plan attaches them to the created item.
+        holding the work of a creation, by `_claims`, are returned as claimed: the plan does not
+        import them, so that one work yields one item, and the next plan attaches them to the
+        created item.
         """
-        pdfs = _pdfs_by_doi(absent)
+        pdfs = [content for content in absent if any(file.is_pdf for file in content.files)]
         creations: list[CreateOp] = []
         skipped: list[SkippedWork] = []
         claimed: set[str] = set()
@@ -193,7 +214,7 @@ class PlanBuilder:
                 skipped.append(SkippedWork(work.identity, reason, work.refs))
                 continue
             first, *others = self._destinations(work.folders)
-            files = tuple(pdfs.get(record.doi, [])) if record.doi else ()
+            files = self._claims(record, pdfs, claimed)
             claimed.update(files)
             creations.append(
                 CreateOp(

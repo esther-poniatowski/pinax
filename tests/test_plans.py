@@ -17,6 +17,7 @@ from conftest import (
 from pinax.config import Target
 from pinax.errors import ConfigError, PlanError
 from pinax.library.model import Library
+from pinax.matching.confirm import TitleConfirmer
 from pinax.matching.model import Match, Method, RecordMatch, Status, Verdict
 from pinax.plans.builder import PlanBuilder
 from pinax.plans.corrections import load_corrections
@@ -33,6 +34,10 @@ COLLECTIONS = [
     api_collection("ELSEWH01", "elsewhere"),
 ]
 ONE_TARGET = [target(".", "BACKGR01", "REVIEW01")]
+
+
+def _builder(lib: Library, inventory: Inventory, targets: list[Target]) -> PlanBuilder:
+    return PlanBuilder(lib, inventory, targets, confirmer=TitleConfirmer(8, 0.5))
 
 
 def _library() -> Library:
@@ -52,7 +57,7 @@ def _inventory(sources: SourceTree) -> Inventory:
     sources.add("b/large.pdf", pdf_bytes("a larger copy of the same work"))
     sources.add("a/haspdf.pdf", pdf_bytes("h"))
     sources.add("a/preprint.pdf", pdf_bytes("p"))
-    sources.add("a/new.pdf", pdf_bytes("n"), ["doi:10.5555/new"])
+    sources.add("a/new.pdf", pdf_bytes("n"), ["A New Synthetic Work. doi:10.5555/new"])
     sources.add("b/new.pdf", pdf_bytes("same name, other content"))
     sources.add("a/slides.pptx", b"slides")
     return sources.inventory()
@@ -79,7 +84,7 @@ def _matches(inventory: Inventory) -> list[Match]:
 
 def test_plan_attaches_files_and_imports_absent_works(sources: SourceTree) -> None:
     inventory = _inventory(sources)
-    plan = PlanBuilder(_library(), inventory, ONE_TARGET).build(_matches(inventory))
+    plan = _builder(_library(), inventory, ONE_TARGET).build(_matches(inventory))
     assert [d.path for d in plan.destinations] == ["review/background"]
     assert plan.destinations[0].scope_path == "review"
     assert [(op.item, Path(op.file.path).name) for op in plan.attachments] == [
@@ -98,13 +103,13 @@ def test_plan_refuses_matches_left_to_check(sources: SourceTree) -> None:
     matches = _matches(inventory)
     matches[0] = Match(matches[0].sha256, Status.CHECK, "NOPDF001", Method.NAME, Verdict.CHECK)
     with pytest.raises(PlanError, match="await a check"):
-        PlanBuilder(_library(), inventory, ONE_TARGET).build(matches)
+        _builder(_library(), inventory, ONE_TARGET).build(matches)
 
 
 def test_each_folder_files_into_its_own_destination(sources: SourceTree) -> None:
     inventory = _inventory(sources)
     targets = [target("a", "BACKGR01", "REVIEW01"), Target("b", by_path("review/methods"), None)]
-    plan = PlanBuilder(_library(), inventory, targets).build(_matches(inventory))
+    plan = _builder(_library(), inventory, targets).build(_matches(inventory))
     assert [d.key for d in plan.destinations] == ["BACKGR01", "METHOD01"]
     filings = sorted((op.item, op.destination) for op in plan.filings)
     assert filings == [("NOPDF001", "BACKGR01"), ("NOPDF001", "METHOD01"), ("PREPUB01", "BACKGR01")]
@@ -121,7 +126,7 @@ def test_a_work_spanning_two_targets_is_imported_once(sources: SourceTree) -> No
     inventory = sources.inventory()
     targets = [target("a", "BACKGR01"), target("b", "METHOD01")]
     matches = [Match(content.sha256, Status.ABSENT) for content in inventory]
-    plan = PlanBuilder(_library(), inventory, targets).build(matches)
+    plan = _builder(_library(), inventory, targets).build(matches)
     assert [(op.staged_name, op.destination, op.also) for op in plan.imports] == [
         ("larger.pdf", "METHOD01", ("BACKGR01",))
     ]
@@ -132,7 +137,7 @@ def test_the_deepest_target_folder_decides(sources: SourceTree) -> None:
     inventory = sources.inventory()
     targets = [target(".", "ELSEWH01"), target("a/deep", "METHOD01")]
     matches = [Match(content.sha256, Status.ABSENT) for content in inventory]
-    plan = PlanBuilder(_library(), inventory, targets).build(matches)
+    plan = _builder(_library(), inventory, targets).build(matches)
     assert [op.destination for op in plan.imports] == ["METHOD01"]
 
 
@@ -148,13 +153,13 @@ def test_plan_refuses_missing_and_conflicting_collections(
     sources: SourceTree, targets: list[Target], message: str
 ) -> None:
     with pytest.raises(PlanError, match=message):
-        PlanBuilder(_library(), _inventory(sources), targets)
+        _builder(_library(), _inventory(sources), targets)
 
 
 def test_plan_refuses_an_ambiguous_path(sources: SourceTree) -> None:
     lib = library([], [*COLLECTIONS, api_collection("TWIN0001", "elsewhere")])
     with pytest.raises(PlanError, match="several collections have the path elsewhere"):
-        PlanBuilder(lib, _inventory(sources), [Target(".", by_path("elsewhere"), None)])
+        _builder(lib, _inventory(sources), [Target(".", by_path("elsewhere"), None)])
 
 
 def test_corrections_are_loaded_and_validated(tmp_path: Path, sources: SourceTree) -> None:
@@ -172,11 +177,11 @@ def test_corrections_are_loaded_and_validated(tmp_path: Path, sources: SourceTre
     corrections = load_corrections(path)
     assert corrections[0].creators is not None and len(corrections[0].creators) == 2
     inventory = _inventory(sources)
-    plan = PlanBuilder(_library(), inventory, ONE_TARGET).build(_matches(inventory), corrections)
+    plan = _builder(_library(), inventory, ONE_TARGET).build(_matches(inventory), corrections)
     assert plan.corrections[0].carry == {"publicationTitle": "bookTitle"}
     path.write_text("corrections:\n  - {item: NONE0001, fields: {date: '1'}}\n", encoding="utf-8")
     with pytest.raises(PlanError, match="not in the library"):
-        PlanBuilder(_library(), inventory, ONE_TARGET).build(
+        _builder(_library(), inventory, ONE_TARGET).build(
             _matches(inventory), load_corrections(path)
         )
 
@@ -202,7 +207,7 @@ def test_staging_copies_and_verifies_and_refuses_a_used_folder(
     tmp_path: Path, sources: SourceTree
 ) -> None:
     inventory = _inventory(sources)
-    plan = PlanBuilder(_library(), inventory, ONE_TARGET).build(_matches(inventory))
+    plan = _builder(_library(), inventory, ONE_TARGET).build(_matches(inventory))
     folder = tmp_path / "staged"
     assert stage(plan, folder) == 2
     assert sorted(str(p.relative_to(folder)) for p in folder.rglob("*.pdf")) == [
@@ -215,7 +220,7 @@ def test_staging_copies_and_verifies_and_refuses_a_used_folder(
 
 def test_worklist_lists_every_operation(sources: SourceTree, tmp_path: Path) -> None:
     inventory = _inventory(sources)
-    plan = PlanBuilder(_library(), inventory, ONE_TARGET).build(_matches(inventory))
+    plan = _builder(_library(), inventory, ONE_TARGET).build(_matches(inventory))
     text = render_worklist(plan, tmp_path / "staged dir")
     assert "## Import (2)" in text and "## Attach a PDF (1)" in text
     assert "## Not imported (1)" in text
@@ -259,7 +264,7 @@ def _record_matches(inventory: Inventory, status: Status = Status.ABSENT) -> lis
 def test_plan_creates_absent_records_and_claims_their_pdfs(sources: SourceTree) -> None:
     inventory = _record_inventory(sources)
     targets = [target("a", "BACKGR01", "REVIEW01"), target("b", "METHOD01")]
-    builder = PlanBuilder(_library(), inventory, targets)
+    builder = _builder(_library(), inventory, targets)
     plan = builder.build(_matches(inventory), records=_record_matches(inventory))
     (creation,) = plan.creations
     assert (creation.identity, creation.destination, creation.records) == (
@@ -284,6 +289,25 @@ def test_plan_creates_absent_records_and_claims_their_pdfs(sources: SourceTree) 
 
 def test_plan_refuses_records_left_to_check(sources: SourceTree) -> None:
     inventory = _record_inventory(sources)
-    builder = PlanBuilder(_library(), inventory, [target(".", "BACKGR01", "REVIEW01")])
+    builder = _builder(_library(), inventory, [target(".", "BACKGR01", "REVIEW01")])
     with pytest.raises(PlanError, match="a/refs.bib#2"):
         builder.build(_matches(inventory), records=_record_matches(inventory, Status.CHECK))
+
+
+def test_a_record_without_doi_claims_the_pdf_that_opens_on_its_title(sources: SourceTree) -> None:
+    sources.add(
+        "a/refs.bib", b"@book{k, title = {A Synthetic Book Without Identifier}, year = 2009}\n"
+    )
+    sources.add(
+        "a/book.pdf", pdf_bytes("book"), ["A Synthetic Book Without Identifier. Chapter 1."]
+    )
+    sources.add("a/other.pdf", pdf_bytes("other"), ["An unrelated synthetic paper. Abstract."])
+    inventory = sources.inventory()
+    matches = [Match(content.sha256, Status.ABSENT) for content in inventory]
+    records = [
+        RecordMatch(w.identity, w.refs, Status.ABSENT) for w in group_records(inventory.records)
+    ]
+    plan = _builder(_library(), inventory, ONE_TARGET).build(matches, records=records)
+    book = next(f.sha256 for f in inventory.files if f.name == "book.pdf")
+    assert [op.files for op in plan.creations] == [(book,)]
+    assert [op.staged_name for op in plan.imports] == ["other.pdf"]
