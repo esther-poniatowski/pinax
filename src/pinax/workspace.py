@@ -70,8 +70,8 @@ class Workspace:
 
     @property
     def evidence(self) -> Path:
-        """Table mapping each source file to its item and citation key."""
-        return self.root / "evidence.tsv"
+        """File mapping each source file to its item and citation key."""
+        return self.root / "evidence.yml"
 
     @property
     def references(self) -> Path:

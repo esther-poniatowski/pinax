@@ -97,8 +97,9 @@ def test_stages_from_inventory_to_export(
     routes, shared = stages.export(config, "after", [config.workspace / "plan.json"], None)
     assert routes == {"matched": 1, "imported": 1}
     assert not shared
-    evidence = (config.workspace / "evidence.tsv").read_text(encoding="utf-8")
-    assert "\timported\tNEWITEM1\troe2020" in evidence
+    evidence = yaml.safe_load((config.workspace / "evidence.yml").read_text(encoding="utf-8"))
+    imported = [e for e in evidence["sources"] if e["route"] == "imported"]
+    assert [(e["zotero_item"], e["citation_key"]) for e in imported] == [("NEWITEM1", "roe2020")]
 
 
 def test_cli_reports_missing_artifacts_and_invalid_configs(tmp_path: Path) -> None:

@@ -1,5 +1,5 @@
 """
-Evidence table: each source file, by SHA-256, mapped to the item that holds it and its citation key.
+Evidence file: each source file, by SHA-256, mapped to the item that holds it and its citation key.
 
 The route of a file states how its item was reached:
 
@@ -19,15 +19,15 @@ EvidenceBuilder
 
 Functions
 ---------
-write_evidence(rows) -> str
-    Render the rows as a tab-separated table.
+render_evidence(rows, header) -> str
+    Render the rows as a YAML document, one flow mapping per file.
 """
 
 from collections.abc import Sequence
-import csv
 from dataclasses import dataclass
 from enum import StrEnum
-import io
+
+import yaml
 
 from pinax.checks.locate import ImportLocator
 from pinax.library.model import Item, Library
@@ -36,7 +36,17 @@ from pinax.matching.model import Match, Status
 from pinax.plans.model import ChangePlan, ImportOp
 from pinax.sources.inventory import Inventory
 
-COLUMNS = ("sha256", "folder", "file", "route", "zotero_item", "citation_key")
+DEFAULT_HEADER = (
+    "# Item holding each source file, written by pinax.\n"
+    "# Fields of each entry under `sources`:\n"
+    "#   sha256        content of the file\n"
+    "#   folder, file  location of the file, relative to the root of the sources\n"
+    "#   route         imported, matched, preprint-of or unresolved\n"
+    "#   zotero_item   key of the live item holding the file, null when unresolved\n"
+    "#   citation_key  citation key of that item, null when unresolved\n"
+)
+_WIDTH = 1 << 16
+"""Line width of the YAML dump, wide enough to keep each entry on one line."""
 
 
 class Route(StrEnum):
@@ -154,25 +164,39 @@ class EvidenceBuilder:
         return rows
 
 
-def write_evidence(rows: Sequence[EvidenceRow]) -> str:
+def render_evidence(rows: Sequence[EvidenceRow], header: str = DEFAULT_HEADER) -> str:
     """
-    Render the rows as a tab-separated table.
+    Render the rows as a YAML document, one flow mapping per file.
 
     Parameters
     ----------
     rows : Sequence[EvidenceRow]
         Evidence rows.
+    header : str
+        Comment block written before the data.
 
     Returns
     -------
     str
-        Table with the header `COLUMNS`, one line per row.
+        YAML document with the list `sources`, in the order of the rows. Each entry stays on one
+        line, so that a change of one file changes one line.
     """
-    buffer = io.StringIO()
-    writer = csv.writer(buffer, delimiter="\t", lineterminator="\n")
-    writer.writerow(COLUMNS)
-    for row in rows:
-        writer.writerow(
-            [row.sha256, row.folder, row.name, row.route.value, row.item, row.citation_key]
-        )
-    return buffer.getvalue()
+    entries = [
+        {
+            "sha256": row.sha256,
+            "folder": row.folder,
+            "file": row.name,
+            "route": row.route.value,
+            "zotero_item": row.item or None,
+            "citation_key": row.citation_key or None,
+        }
+        for row in rows
+    ]
+    body = yaml.safe_dump(
+        {"sources": entries},
+        sort_keys=False,
+        allow_unicode=True,
+        default_flow_style=None,
+        width=_WIDTH,
+    )
+    return (header.rstrip("\n") + "\n" if header else "") + body

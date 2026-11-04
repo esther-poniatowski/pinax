@@ -24,7 +24,7 @@ write_script(config) -> Path
 check(config, label, reader, log) -> Report
     Check the plan against a snapshot taken after the change.
 export(config, label, plans, header) -> tuple[Counter[str], dict[str, list[str]]]
-    Write the evidence table and the reference lists.
+    Write the evidence file and the reference lists.
 """
 
 from collections import Counter
@@ -36,7 +36,7 @@ from pinax.artifacts import read_json, write_json, write_text
 from pinax.checks.model import Report
 from pinax.checks.operations import PlanChecker, check_log, read_log
 from pinax.config import Config
-from pinax.exports.evidence import EvidenceBuilder, write_evidence
+from pinax.exports.evidence import EvidenceBuilder, render_evidence
 from pinax.exports.references import DEFAULT_HEADER, render_references, shared_keys
 from pinax.library.client import ZoteroClient
 from pinax.library.snapshot import load_snapshot, take_snapshot
@@ -187,7 +187,7 @@ def export(
     config: Config, label: str, plans: Sequence[Path], header: Path | None
 ) -> tuple[Counter[str], dict[str, list[str]]]:
     """
-    Write the evidence table and the reference lists from the matches against a snapshot.
+    Write the evidence file and the reference lists from the matches against a snapshot.
 
     Returns
     -------
@@ -202,7 +202,7 @@ def export(
         library, StorageIndex(config.library.storage), [_plan(path) for path in plans]
     )
     rows = builder.build(inventory, matches)
-    write_text(workspace.evidence, write_evidence(rows))
+    write_text(workspace.evidence, render_evidence(rows))
     text = header.read_text(encoding="utf-8") if header else DEFAULT_HEADER
     write_text(workspace.references, render_references(rows, text))
     return Counter(row.route.value for row in rows), shared_keys(rows)

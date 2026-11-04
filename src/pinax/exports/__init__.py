@@ -1,5 +1,5 @@
 """
-Exports of a reconciliation: the evidence table and the reference list of each folder.
+Exports of a reconciliation: the evidence file and the reference list of each folder.
 
 Modules
 -------

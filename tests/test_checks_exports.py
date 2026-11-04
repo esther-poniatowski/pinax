@@ -1,4 +1,4 @@
-"""Tests of the checks of a plan after the change, and of the evidence table and reference lists."""
+"""Tests of the checks of a plan after the change, and of the evidence file and reference lists."""
 
 from pathlib import Path
 
@@ -17,7 +17,7 @@ from conftest import (
 )
 from pinax.checks.model import Outcome
 from pinax.checks.operations import PlanChecker, check_log
-from pinax.exports.evidence import EvidenceBuilder, Route, write_evidence
+from pinax.exports.evidence import EvidenceBuilder, Route, render_evidence
 from pinax.exports.references import render_references, shared_keys
 from pinax.hashing import digest_file
 from pinax.library.model import Library
@@ -242,9 +242,18 @@ def test_evidence_routes_and_reference_lists(sources: SourceTree, storage: Stora
     assert by_name["preprint.pdf"].route is Route.PREPRINT_OF
     assert by_name["nokey.pdf"].route is Route.UNRESOLVED
     assert by_name["nothing.pdf"].route is Route.UNRESOLVED
-    table = write_evidence(rows).splitlines()
-    assert table[0] == "sha256\tfolder\tfile\troute\tzotero_item\tcitation_key"
-    assert len(table) == len(inventory.files) + 1
+    text = render_evidence(rows, "# header\n")
+    entries = [line for line in text.splitlines() if line.startswith("- {")]
+    assert len(entries) == len(inventory.files)
+    evidence = yaml.safe_load(text)["sources"]
+    assert list(evidence[0]) == ["sha256", "folder", "file", "route", "zotero_item", "citation_key"]
+    assert [(e["sha256"], e["file"]) for e in evidence] == [(r.sha256, r.name) for r in rows]
+    nothing = next(entry for entry in evidence if entry["file"] == "nothing.pdf")
+    assert (nothing["route"], nothing["zotero_item"], nothing["citation_key"]) == (
+        "unresolved",
+        None,
+        None,
+    )
     references = yaml.safe_load(render_references(rows, "# header\n"))
     assert references["folders"]["f1"] == ["doe2004", "roe2010", "smith1999"]
     assert references["unresolved"] == ["f2/nokey.pdf", "f2/nothing.pdf"]

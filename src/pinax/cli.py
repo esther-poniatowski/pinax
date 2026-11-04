@@ -17,7 +17,7 @@ plan : Build the change plan and its worklist.
 stage : Stage the files to import.
 script : Generate the Zotero script of the plan.
 check : Check the plan against a snapshot taken after the change.
-export : Write the evidence table and the reference list of each folder.
+export : Write the evidence file and the reference list of each folder.
 
 See Also
 --------
@@ -227,7 +227,7 @@ def cli_export(
         Path | None, typer.Option("--header", help="Comment block of the reference list.")
     ] = None,
 ) -> None:
-    """Write the evidence table and the reference list of each folder."""
+    """Write the evidence file and the reference list of each folder."""
     settings = _load(config)
     try:
         routes, shared = stages.export(settings, snapshot, plan or [], header)
