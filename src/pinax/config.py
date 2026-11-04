@@ -3,9 +3,10 @@ Configuration of one reconciliation, read from a YAML file.
 
 One file declares the folder of sources, the destination collection of each of its folders, the
 library, the parameters of the matching, and the files of resolutions and corrections. The file is
-merged over the defaults shipped with the package, `defaults.yml`, which hold every optional key;
-the code holds no default value. Relative paths resolve against the directory of the configuration
-file, never against the current directory.
+merged over the defaults shipped with the package, `defaults.yml`, from which every optional key
+takes its default; a null default, as for `staging`, selects a fallback that the documentation of
+the key states. Relative paths resolve against the directory of the configuration file, never
+against the current directory; the folder of a target is relative to the root of the sources.
 
 Classes
 -------
@@ -43,7 +44,7 @@ import yaml
 
 from pinax.errors import ConfigError
 from pinax.names import NameTemplate, compile_template
-from pinax.text import fold
+from pinax.text import MIN_WORD_LENGTH, fold, words
 
 DEFAULTS = "defaults.yml"
 """Package resource holding the default of every optional key."""
@@ -287,6 +288,12 @@ def _typed(value: Any, expected: Any, name: str) -> Any:
     if get_origin(expected) is frozenset:
         if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
             raise ConfigError(f"{where} must be a list of strings")
+        ignored = [word for word in value if words(word) != [fold(word)]]
+        if ignored:
+            raise ConfigError(
+                f"{where} holds {", ".join(ignored)}: a stop word is one word of at least "
+                f"{MIN_WORD_LENGTH} letters or digits, since shorter words are always ignored"
+            )
         return frozenset(fold(word) for word in value)
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ConfigError(f"{where} must be of type {expected.__name__}")

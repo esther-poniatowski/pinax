@@ -123,6 +123,10 @@ TARGET = "targets: [{folder: ., destination: {key: D}}]\n"
             "matching.stop_words must be a list",
         ),
         ("sources: {root: r}\n" + TARGET + "matching: [1]\n", "must be a mapping"),
+        (
+            "sources: {root: r}\n" + TARGET + "matching: {stop_words: [les, de, l'un]}\n",
+            "holds de, l'un: a stop word is one word of at least 3",
+        ),
     ],
 )
 def test_config_rejects_invalid_files(tmp_path: Path, text: str, message: str) -> None:
@@ -141,11 +145,11 @@ def test_consumer_overrides_one_key_and_replaces_lists(tmp_path: Path) -> None:
         tmp_path / "pinax.yml",
         "sources: {root: refs, ignore: [Thumbs.db]}\n"
         + TARGET
-        + "matching: {stop_words: [Über, de, la], surname_prefix: 6}\n",
+        + "matching: {stop_words: [Über, les, des], surname_prefix: 6}\n",
     )
     config = load_config(path)
     assert config.sources.ignore == ("Thumbs.db",)
     assert config.sources.pages == 2
-    assert config.matching.stop_words == frozenset({"uber", "de", "la"})
+    assert config.matching.stop_words == frozenset({"uber", "les", "des"})
     assert config.matching.surname_prefix == 6
     assert config.matching.title_words == 8

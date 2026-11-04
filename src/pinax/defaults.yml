@@ -19,8 +19,8 @@ matching:
   reverse_min_words: 4
   surname_prefix: 4
   undated_penalty: 0.1
-  # Quoted: YAML reads a bare `on`, `no` or `yes` as a boolean.
-  stop_words: [the, of, and, a, an, in, "on", to, for, with, by, from, at, as, is, its]
+  # Words shorter than three characters are always ignored, so a stop word holds three or more.
+  stop_words: [the, and, for, with, from, its]
 resolutions: null
 corrections: null
 staging: null
