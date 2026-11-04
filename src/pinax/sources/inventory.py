@@ -1,9 +1,10 @@
 """
 Inventory of a folder of reference files.
 
-Each file is recorded with its digests, the year that opens its name, the DOI found on its first
-pages and the text of those pages. Files with identical bytes form one content, identified by its
-SHA-256: matching works on contents, and the exports return to files.
+Each file is recorded with its digests, the DOI found on its first pages and the text of those
+pages. The name of a file is read by the matching, under the templates of the configuration. Files
+with identical bytes form one content, identified by its SHA-256: matching works on contents, and
+the exports return to files.
 
 Classes
 -------
@@ -23,7 +24,6 @@ build_inventory(config, reader) -> Inventory
 from collections.abc import Iterator, Mapping
 from dataclasses import asdict, dataclass
 from pathlib import Path
-import re
 from typing import Any
 
 from pinax.config import SourcesConfig
@@ -32,12 +32,11 @@ from pinax.hashing import digest_file
 from pinax.sources.pdf import PdfReader
 from pinax.text import find_doi
 
-INVENTORY_FORMAT = "pinax-inventory/1"
-_YEAR_PREFIX = re.compile(r"^((?:1[5-9]|20)\d\d)(?!\d)")
+INVENTORY_FORMAT = "pinax-inventory/2"
 
 
 @dataclass(frozen=True)
-class SourceFile:  # pylint: disable=too-many-instance-attributes
+class SourceFile:
     """
     One file of the folder.
 
@@ -53,8 +52,6 @@ class SourceFile:  # pylint: disable=too-many-instance-attributes
         SHA-256 of the content.
     md5 : str
         MD5 of the content.
-    year : str
-        Year that opens the file name, empty when the name does not open on a year.
     doi : str
         First DOI found on the first pages, normalized.
     pdf_title : str
@@ -66,7 +63,6 @@ class SourceFile:  # pylint: disable=too-many-instance-attributes
     size: int
     sha256: str
     md5: str
-    year: str = ""
     doi: str = ""
     pdf_title: str = ""
 
@@ -220,7 +216,6 @@ def build_inventory(config: SourcesConfig, reader: PdfReader) -> Inventory:
     pages: dict[str, list[str]] = {}
     for path in _walk(config):
         digests = digest_file(path)
-        year = _YEAR_PREFIX.match(path.name)
         doi, title = "", ""
         if path.suffix.lower() == ".pdf":
             if digests.sha256 not in pages:
@@ -234,7 +229,6 @@ def build_inventory(config: SourcesConfig, reader: PdfReader) -> Inventory:
                 size=digests.size,
                 sha256=digests.sha256,
                 md5=digests.md5,
-                year=year.group(1) if year else "",
                 doi=doi,
                 pdf_title=title,
             )

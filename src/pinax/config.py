@@ -38,6 +38,7 @@ from typing import Any, get_origin
 import yaml
 
 from pinax.errors import ConfigError
+from pinax.names import NameTemplate, compile_template
 from pinax.text import fold
 
 DEFAULTS = "defaults.yml"
@@ -59,12 +60,15 @@ class SourcesConfig:
         File names skipped by the inventory.
     pages : int
         Number of opening pages whose text is extracted.
+    names : tuple[NameTemplate, ...]
+        Syntaxes of the file names, tried in order by the match by name.
     """
 
     root: Path
     folders: tuple[str, ...]
     ignore: tuple[str, ...]
     pages: int
+    names: tuple[NameTemplate, ...]
 
 
 @dataclass(frozen=True)
@@ -251,15 +255,19 @@ def _typed(value: Any, expected: Any, name: str) -> Any:
 
 def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
     """Validated section `sources`."""
-    _reject_unknown(data, {"root", "folders", "ignore", "pages"}, "sources")
+    _reject_unknown(data, {"root", "folders", "ignore", "pages", "names"}, "sources")
     pages = data.get("pages")
     if not isinstance(pages, int) or isinstance(pages, bool) or pages < 1:
         raise ConfigError("sources.pages must be a positive integer")
+    names = _strings(data.get("names"), "sources.names")
+    if not names:
+        raise ConfigError("sources.names must list at least one template")
     return SourcesConfig(
         root=_path(data.get("root"), base, "sources.root"),
         folders=_strings(data.get("folders"), "sources.folders"),
         ignore=_strings(data.get("ignore"), "sources.ignore"),
         pages=pages,
+        names=tuple(compile_template(text) for text in names),
     )
 
 

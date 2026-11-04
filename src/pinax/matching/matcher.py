@@ -26,6 +26,7 @@ from pinax.matching.candidates import CandidateSource, DoiSource, NameSource, Sa
 from pinax.matching.confirm import TitleConfirmer, TitleIndex
 from pinax.matching.model import Candidate, Match, Method, Status, Verdict
 from pinax.matching.resolutions import Action, Resolution, Resolutions
+from pinax.names import NameTemplate
 from pinax.sources.inventory import Content, Inventory
 
 MAX_CITED_NOTED = 5
@@ -75,6 +76,7 @@ class Matcher:
         library: Library,
         stored: Mapping[str, str],
         config: MatchingConfig,
+        templates: Sequence[NameTemplate],
         resolutions: Resolutions,
     ) -> "Matcher":
         """
@@ -88,6 +90,8 @@ class Matcher:
             Attachment key by SHA-256 of its stored file.
         config : MatchingConfig
             Thresholds.
+        templates : Sequence[NameTemplate]
+            Syntaxes of the file names, read by the match by name.
         resolutions : Resolutions
             Manual resolutions.
 
@@ -99,7 +103,7 @@ class Matcher:
         sources: list[CandidateSource] = [
             SameFileSource(library, stored),
             DoiSource(library),
-            NameSource(library, config),
+            NameSource(library, config, templates),
         ]
         return cls(
             library,

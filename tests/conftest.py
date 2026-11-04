@@ -15,6 +15,7 @@ import pytest
 
 from pinax.config import MatchingConfig, SourcesConfig, load_defaults
 from pinax.library.model import Library
+from pinax.names import NameTemplate, compile_template
 from pinax.sources.inventory import Inventory, build_inventory
 
 
@@ -98,11 +99,20 @@ def matching_config(**overrides: Any) -> MatchingConfig:
     return MatchingConfig.from_mapping({**load_defaults()["matching"], **overrides})
 
 
+def name_templates(*texts: str) -> tuple[NameTemplate, ...]:
+    """Compiled templates, by default those of the shipped defaults."""
+    return tuple(compile_template(text) for text in texts or load_defaults()["sources"]["names"])
+
+
 def sources_config(root: Path, folders: Sequence[str] = ()) -> SourcesConfig:
     """Sources section of the shipped defaults for a root and its folders."""
     defaults = load_defaults()["sources"]
     return SourcesConfig(
-        root=root, folders=tuple(folders), ignore=tuple(defaults["ignore"]), pages=defaults["pages"]
+        root=root,
+        folders=tuple(folders),
+        ignore=tuple(defaults["ignore"]),
+        pages=defaults["pages"],
+        names=name_templates(),
     )
 
 

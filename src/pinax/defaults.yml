@@ -6,6 +6,7 @@ workspace: .pinax
 sources:
   ignore: [.DS_Store]
   pages: 2
+  names: ["{year}_{title}", "{title}"]
 library:
   api: http://127.0.0.1:23119
   storage: ~/Zotero/storage

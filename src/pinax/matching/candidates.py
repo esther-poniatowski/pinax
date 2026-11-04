@@ -13,17 +13,15 @@ NameSource
     Item whose first author, year and title words agree with the file name.
 """
 
-from collections.abc import Mapping
-import re
+from collections.abc import Mapping, Sequence
 from typing import Protocol
 
 from pinax.config import MatchingConfig
 from pinax.library.model import Item, Library
 from pinax.matching.model import Candidate, Method
+from pinax.names import NameTemplate, parse_name
 from pinax.sources.inventory import Content
 from pinax.text import content_words
-
-_YEAR_PREFIX = re.compile(r"^\d{4}[a-z]?_")
 
 
 class CandidateSource(Protocol):
@@ -121,9 +119,10 @@ class NameSource:
     """
     Item whose first author, year and title words agree with the file name.
 
-    A file name such as `2004_Smith_attention_model.pdf` opens on a year, names an author and
-    abbreviates the title. Library dates can be empty or wrong, so an item without a plausible
-    year is not excluded by the year test, only penalized.
+    The templates of the consumer read the year, the authors and the title from the name, such as
+    `2004_Smith_attention_model.pdf` under `{year}_{title}`. Without `{authors}`, the surnames
+    are looked for among the title words. Library dates can be empty or wrong, so an item without
+    a plausible year is not excluded by the year test, only penalized.
 
     Parameters
     ----------
@@ -131,16 +130,24 @@ class NameSource:
         Library snapshot.
     config : MatchingConfig
         Threshold, year tolerance, surname prefix, penalty of an undated match and stop words.
+    templates : Sequence[NameTemplate]
+        Syntaxes of the file names, in the order tried; a name that none matches is not matched
+        by name.
     """
 
     method = Method.NAME
 
-    def __init__(self, library: Library, config: MatchingConfig) -> None:
+    def __init__(
+        self, library: Library, config: MatchingConfig, templates: Sequence[NameTemplate]
+    ) -> None:
         self._items = list(library.regular())
         self._config = config
+        self._templates = tuple(templates)
 
-    def _score(self, item: Item, year: int | None, tokens: set[str]) -> float | None:
-        """Overlap of an item with the name tokens, or None when its year or authors disagree."""
+    def _score(
+        self, item: Item, year: int | None, tokens: set[str], authors: set[str]
+    ) -> float | None:
+        """Overlap of an item with the title tokens, or None when its year or authors disagree."""
         config = self._config
         item_year = item.year
         if year is not None and item_year is not None:
@@ -150,7 +157,7 @@ class NameSource:
             word for name in item.surnames for word in content_words(name, config.stop_words)
         }
         prefix = config.surname_prefix
-        if not any(_agrees(surname, token, prefix) for surname in surnames for token in tokens):
+        if not any(_agrees(surname, token, prefix) for surname in surnames for token in authors):
             return None
         title = content_words(item.title, config.stop_words)
         overlap = len(title & tokens) / max(1, min(len(title), len(tokens - surnames)))
@@ -160,13 +167,15 @@ class NameSource:
 
     def propose(self, content: Content) -> Candidate | None:
         """Best-scoring item when its score reaches the threshold; the first item wins a tie."""
-        file = content.first
-        stem = _YEAR_PREFIX.sub("", file.name.rsplit(".", 1)[0])
-        tokens = content_words(stem.replace("_", " "), self._config.stop_words)
-        year = int(file.year) if file.year else None
+        parsed = parse_name(self._templates, content.first.name)
+        if parsed is None:
+            return None
+        stop_words = self._config.stop_words
+        tokens = content_words(parsed.title, stop_words)
+        authors = tokens if parsed.authors is None else content_words(parsed.authors, stop_words)
         best: Candidate | None = None
         for item in self._items:
-            score = self._score(item, year, tokens)
+            score = self._score(item, parsed.year, tokens, authors)
             if score is not None and (best is None or score > best.score):
                 best = Candidate(item.key, self.method, score)
         return best if best is not None and best.score >= self._config.name_threshold else None

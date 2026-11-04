@@ -128,7 +128,8 @@ def match(config: Config, label: str) -> Counter[str]:
     inventory = _inventory(workspace)
     stored = StorageIndex(config.library.storage).by_sha256(c.size for c in inventory)
     resolutions = load_resolutions(config.resolutions, inventory)
-    matches = Matcher.build(library, stored, config.matching, resolutions).match_all(inventory)
+    matcher = Matcher.build(library, stored, config.matching, config.sources.names, resolutions)
+    matches = matcher.match_all(inventory)
     write_json(workspace.matches, matches_to_json(matches, label))
     return Counter(f"{m.status.value}:{m.method.value if m.method else NO_METHOD}" for m in matches)
 

@@ -8,6 +8,7 @@ from conftest import (
     api_item,
     library,
     matching_config,
+    name_templates,
     pdf_attachment,
     pdf_bytes,
 )
@@ -19,6 +20,7 @@ from pinax.matching.matcher import Matcher
 from pinax.matching.model import Match, Method, Status, Verdict
 from pinax.matching.resolutions import Resolutions, load_resolutions
 from pinax.matching.works import group_works
+from pinax.names import NameTemplate, compile_template, parse_name
 from pinax.sources.inventory import Inventory
 
 TITLE = "Temporal dynamics of attention in a recurrent network model"
@@ -31,6 +33,7 @@ def _match(
     storage: Storage | None = None,
     resolutions: str | None = None,
     config: MatchingConfig | None = None,
+    templates: tuple[NameTemplate, ...] | None = None,
 ) -> dict[str, Match]:
     inventory = sources.inventory()
     stored = StorageIndex(storage.root).by_sha256(c.size for c in inventory) if storage else {}
@@ -39,7 +42,8 @@ def _match(
         path = sources.root.parent / "resolutions.yml"
         path.write_text(resolutions, encoding="utf-8")
         loaded = load_resolutions(path, inventory)
-    matcher = Matcher.build(lib, stored, config or matching_config(), loaded)
+    names = templates if templates is not None else name_templates()
+    matcher = Matcher.build(lib, stored, config or matching_config(), names, loaded)
     return {inventory.contents[m.sha256].first.name: m for m in matcher.match_all(inventory)}
 
 
@@ -55,7 +59,6 @@ def test_inventory_groups_identical_files_and_reads_doi(sources: SourceTree) -> 
     content = inventory.contents[inventory.files[0].sha256]
     assert content.folders == ("a", "b")
     assert content.doi == "10.5555/abc.1"
-    assert inventory.files[0].year == "2004"
     assert Inventory.from_json(inventory.to_json()).contents.keys() == inventory.contents.keys()
 
 
@@ -138,6 +141,47 @@ def test_name_match_accepts_garbled_surnames_and_invalid_years(sources: SourceTr
     assert (match.status, match.item, match.method) == (Status.MATCHED, "ITEM0001", Method.NAME)
     strict = _match(sources, lib, config=matching_config(surname_prefix=20))[name]
     assert (strict.status, strict.method) == (Status.CHECK, Method.REVERSE)
+
+
+def test_several_name_syntaxes_coexist(sources: SourceTree) -> None:
+    sources.add("a/2004_Smith_temporal_dynamics_attention.pdf", pdf_bytes("one"), [TITLE])
+    sources.add("a/Roe - 2010 - Spectral bounds learning.pdf", pdf_bytes("two"), [OTHER])
+    sources.add("a/unnamed.pdf", pdf_bytes("three"), ["no title here"])
+    lib = library(
+        [
+            api_item("ITEM0001", title=TITLE, date="2004", creators=["Smith"]),
+            api_item("ITEM0002", title=OTHER, date="2010", creators=["Roe"]),
+        ]
+    )
+    templates = name_templates("{year}_{title}", "{authors} - {year} - {title}")
+    matches = _match(sources, lib, templates=templates)
+    assert matches["2004_Smith_temporal_dynamics_attention.pdf"].method is Method.NAME
+    assert matches["Roe - 2010 - Spectral bounds learning.pdf"].item == "ITEM0002"
+    assert matches["Roe - 2010 - Spectral bounds learning.pdf"].method is Method.NAME
+    assert matches["unnamed.pdf"].status is Status.ABSENT
+    only_one = _match(sources, lib, templates=name_templates("{year}_{title}"))
+    assert only_one["Roe - 2010 - Spectral bounds learning.pdf"].method is not Method.NAME
+
+
+def test_an_authors_placeholder_keeps_surnames_out_of_the_title() -> None:
+    template = compile_template("{year}_{authors}__{title}")
+    parsed = parse_name([template], "2004a_Doe_Roe__a_model.pdf")
+    assert parsed is not None
+    assert (parsed.year, parsed.authors, parsed.title) == (2004, "Doe_Roe", "a_model")
+    assert parse_name([template], "Doe_a_model.pdf") is None
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("{year}_{name}", "unknown placeholder {name}"),
+        ("{title}_{title}", "repeated"),
+        ("{year}_{authors}", "has no {title}"),
+    ],
+)
+def test_invalid_templates_are_refused(text: str, message: str) -> None:
+    with pytest.raises(ConfigError, match=message):
+        compile_template(text)
 
 
 def test_reverse_search_confirms_only_a_title_that_opens_the_file(sources: SourceTree) -> None:
