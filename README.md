@@ -10,11 +10,11 @@ Reconciles a folder of reference files with a Zotero library and applies verifie
 
 ## Overview
 
-A literature review leaves folders of PDF files. The work of each file may already lie in a Zotero library, possibly under another file name, without its PDF, or outside the collection of the review. Pinax maps each file of such a folder to the Zotero item that holds its work, and decides the changes that the library needs. One change plan records these changes:
+A literature review leaves folders of PDF files. The work of each file may already lie in a Zotero library, possibly under another file name, without its PDF, or outside the collection of its folder. Pinax maps each file of such a folder to the Zotero item that holds its work, and decides the changes that the library needs. One change plan records these changes:
 
 - the works to import;
 - the PDFs to attach to existing items;
-- the existing items to add to the collection of the review;
+- the existing items to add to the collection of their folder;
 - the item records to correct.
 
 From the plan, Pinax generates a script for the researcher to run inside Zotero. After the change, Pinax verifies the library against the same plan. Finally, Pinax exports the citation keys of the items that hold the files of each folder.
@@ -41,15 +41,17 @@ Pre-alpha. The stages from the inventory to the exports are implemented and test
 
 ## Quick start
 
-A first run on a folder needs a configuration file and the Zotero application running. The configuration file below declares the folder of references, the collection that receives the filed and imported items, and the workspace of the artifacts:
+A first run on a folder needs a configuration file and the Zotero application running. The configuration file below declares the folder of references and the collection that receives its filed and imported items:
 
 ```yaml
-workspace: .pinax
 sources:
   root: ~/references/review
-library:
-  destination: ABCD2345
+targets:
+  - folder: .
+    destination: {path: Review}
 ```
+
+Every other key takes the value of the defaults shipped with Pinax. The [configuration reference](docs/configuration.md) describes each key, the targets of several folders and the syntaxes of file names.
 
 The commands below run the four stages that precede any change to the library:
 

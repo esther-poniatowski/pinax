@@ -3,7 +3,7 @@ tags:
   - decision
 status: proposed
 created: 2026-11-03
-revised: 2026-11-03
+revised: 2026-11-04
 index: "[Architecture decisions](docs/adr/_index.md)"
 aliases:
   - Change plan contract decision
@@ -29,7 +29,7 @@ The present record fixes the access to the library, the identity of a file, the 
 
 **Confirmation by the opening words of the title.** The routes of the matching run in a fixed order: same stored file, DOI, file name. A candidate other than an identical file is confirmed only when the first eight words of its title appear in sequence in the first pages of the file. The reverse search accepts a title only when the title starts within the opening window of the first page. A candidate that is neither identical nor confirmed waits for a manual resolution. The resolutions live in a file that every run applies. ^confirmation
 
-**The change plan as the contract.** The plan builder writes one plan, and the script generator reads nothing else. The checks read the same plan back. The builder refuses to plan while a match waits for a resolution. A plan never creates a collection. ^plan-contract
+**The change plan as the contract.** The plan builder writes one plan, and the script generator reads nothing else. The checks read the same plan back. The builder refuses to plan while a match waits for a resolution. Every filing and every import of the plan records its destination collection, as the [target](consumer-configuration.md#^targets) of the folder of the file assigns it. A plan never creates a collection. ^plan-contract
 
 **Writes through a script generated from the plan.** The researcher runs the generated script inside Zotero. The script is assembled from units of one concern each:
 
@@ -40,7 +40,7 @@ The present record fixes the access to the library, the identity of a file, the 
 
 An attachment or filing step tests its postcondition first, and skips the write when the postcondition holds. A correction step sets the planned values again, and a corrected item stays unchanged. Therefore, a second run changes nothing. Then, the checks verify every operation against a new snapshot, independently of the log of the script. ^script-route
 
-**Imports through a staged folder.** The stage command copies the file of each work to import into a folder that holds only those files. The researcher drops the files into the destination collection, and Zotero retrieves their metadata. The checks locate each imported file by its content. A file left without a parent item, a record whose title does not open its PDF, and a duplicate each fail a check. ^staged-imports
+**Imports through a staged folder.** The stage command copies the file of each work to import into a folder that holds only those files, with one sub-folder per destination. The researcher drops the files of each sub-folder into its collection, and Zotero retrieves their metadata. The checks locate each imported file by its content. A file left without a parent item, a record whose title does not open its PDF, and a duplicate each fail a check. ^staged-imports
 
 ## Options rejected
 

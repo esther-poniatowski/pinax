@@ -5,48 +5,100 @@ aliases:
 ---
 # Configuration files
 
-A reconciliation reads three YAML files: the configuration file, required, and two optional files of manual decisions. A relative path in the configuration file resolves against the directory of that file, never against the current directory. An unknown key in any of the three files stops the command with an error.
+A reconciliation reads three YAML files: the configuration file, required, and two optional files of manual decisions. A relative path in the configuration file resolves against the directory of that file, never against the current directory. The folder of a target is an exception: it is relative to the root of the sources. An unknown key in any of the three files stops the command with an error.
 
 ## Configuration file
 
-The configuration file declares where the files lie, which collection receives the items, and where the artifacts go. The file holds two required sections, `sources` and `library`, and five optional keys. The example below sets every key:
+The configuration file declares where the files lie, which collection receives the items of each folder, and how Pinax reads the files. Only two keys are required: the root of the sources, `sources.root`, and the list `targets`. Every other key takes its value from the [defaults file](../src/pinax/defaults.yml) shipped with Pinax. A key of the configuration file overrides its default. When the file and the defaults both hold a mapping under one key, the two mappings are merged key by key, at every depth. Any other value of the file, such as a list, replaces the default.
+
+The example below reconciles two folders with two collections, reads file names in two syntaxes with a fallback, and overrides two matching keys:
 
 ```yaml
-workspace: .pinax                # directory of the artifacts; default `.pinax`
 sources:
-  root: ~/references/review      # required
-  folders: [reading, methods]   # default: every file under the root
-  ignore: [.DS_Store]            # default: [.DS_Store]
-  pages: 2                       # opening pages read from each PDF; default 2
-library:
-  destination: ABCD2345          # required: key of the collection receiving items
-  scope: EFGH6789                # collection whose sub-tree counts as filed; default: destination
-  api: http://127.0.0.1:23119    # loopback only; default shown
-  storage: ~/Zotero/storage      # default shown
+  root: ~/references/review
+  names: ["{year}_{title}", "{authors} - {year} - {title}", "{title}"]
+targets:
+  - folder: reading
+    destination: {path: Review/Reading}
+  - folder: methods
+    destination: {key: EFGH6789}
+    scope: {path: Review}
 matching:
-  title_words: 8
-  reject_below: 0.5
-  name_threshold: 0.5
-  year_tolerance: 1
-  opening_words: 80
-  reverse_min_words: 4
-resolutions: resolutions.yml     # optional
-corrections: corrections.yml     # optional
-staging: staged                  # resolves against this file; default: `staged/` in the workspace
+  title_words: 6
+  stop_words: [the, and, for, les, des, une]
+resolutions: resolutions.yml
 ```
 
-The collection keys are the eight-character keys of the local API. The scope collection lets a review collection with sub-collections count as one destination: an item anywhere in the sub-tree of the scope is not filed again.
+The config command validates the configuration file, then prints the configuration in effect: the file merged over the defaults. The printed paths appear as written, before their resolution:
 
-The section `matching` sets the thresholds of the matching:
+```sh
+pinax config --config pinax.yml
+```
 
-| Key | Effect | Default |
+The table below states the effect of each other key of the defaults file:
+
+| Key | Effect |
+| --- | --- |
+| `workspace` | directory of the artifacts of every stage |
+| `sources.ignore` | exact file names skipped by the inventory, without wildcards |
+| `sources.pages` | opening pages whose text is read from each PDF |
+| `library.api` | base URL of the Zotero desktop application; only a loopback host is accepted |
+| `library.storage` | storage directory of Zotero, holding one sub-directory per attachment key |
+| `resolutions` | file of the manual resolutions of matches, described below |
+| `corrections` | file of the corrections of item records, described below |
+| `staging` | folder receiving the files to import; without a value, the folder `staged/` of the workspace |
+
+## Targets
+
+A target assigns a folder of the sources to the collection that receives its items. Each target holds two required keys and one optional key:
+
+- `folder`: a folder relative to the root, or `.` for the root itself. An absolute path must lie under the root;
+- `destination`: the collection that receives the filed and imported items of the folder;
+- `scope`: optional, the collection whose sub-tree counts as filed: an item in the scope or in one of its descendants receives no filing. Without a scope, the destination is the scope.
+
+Each folder is named by one target only, and a folder cannot climb above the root.
+
+A collection is named either by its eight-character key, `{key: EFGH6789}`, or by its path from the top level, `{path: Review/Reading}`. The plan command resolves each path against the snapshot of the library. The command stops in three cases:
+
+- a key or a path names no collection;
+- a path names several collections, and only a key distinguishes them;
+- two targets give one destination two different scopes.
+
+A file belongs to the target whose folder is the deepest folder containing the file. Therefore, a target on a sub-folder overrides a target on its parent. The inventory reads only the folders of the targets.
+
+## File-name templates
+
+The match by name reads the year, the authors and the title from the name of a file. The key `sources.names` lists the syntaxes of the names as templates. The match compares the templates, in order, with the whole name without its extension. The first template that matches parses the name. Each template is quoted, since YAML reads a leading `{` as the start of a mapping.
+
+A template combines literal text with three placeholders, each used at most once:
+
+| Placeholder | Matches | Required |
 | --- | --- | --- |
-| `title_words` | opening title words that must appear in sequence to confirm a candidate | 8 |
-| `reject_below` | share of title words found in the pages below which a candidate is rejected | 0.5 |
-| `name_threshold` | lowest overlap between file-name words and title words for a match by name | 0.5 |
-| `year_tolerance` | largest difference between the year of a file name and the year of an item | 1 |
-| `opening_words` | window, in words from the start of the first page, in which the reverse search accepts a title | 80 |
-| `reverse_min_words` | shortest title, in words, that the reverse search looks for | 4 |
+| `{year}` | a year from 1500 to 2099, optionally followed by one lower-case letter, as in `2004a` | no |
+| `{authors}` | any text, the shortest that lets the rest of the template match | no |
+| `{title}` | any text, the shortest that lets the rest of the template match | yes |
+
+The literal text between two placeholders separates them. Thus, the template `{year}_{title}` reads the file name `2004_Smith_attention_model.pdf` as the year 2004 and the title words `Smith attention model`. Without `{authors}`, the match looks for the surnames of an item among the title words.
+
+The default templates are `{year}_{title}` and `{title}`, and the template `{title}` matches any name. A list of templates in the configuration file replaces the default list. When no template of the list matches a name, the match by name skips its file, and the other routes of the matching still apply.
+
+## Matching thresholds
+
+The section `matching` sets the thresholds of the matching and the stop words of the match by name:
+
+| Key | Effect |
+| --- | --- |
+| `title_words` | opening title words that must appear in sequence to confirm a candidate |
+| `reject_below` | share of title words found in the pages below which a candidate is rejected |
+| `name_threshold` | lowest overlap of a file name with an item title for the match by name to propose a candidate |
+| `year_tolerance` | largest difference between the year of a file name and the year of an item |
+| `opening_words` | window, in words from the start of the first page, in which the reverse search accepts a title |
+| `reverse_min_words` | shortest title, in words, that the reverse search looks for |
+| `surname_prefix` | length, in characters, of the shortest surname or file-name word compared by prefix, so that a garbled surname still matches; shorter words must be equal |
+| `undated_penalty` | score removed from a match by name when the year of the name or of the item is unknown |
+| `stop_words` | words ignored by the match by name in titles and surnames, such as articles |
+
+Every stage compares words after one normalization: accents and case are folded, and words shorter than three characters are dropped. Therefore, a stop word holds three characters or more, and the configuration refuses a shorter one. For the same reason, a surname of two letters never matches by name, and its file relies on the other routes. When YAML would read a value as a boolean, such as `yes` or `off`, the value is quoted.
 
 ## Resolutions file
 
