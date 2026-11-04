@@ -29,7 +29,7 @@ from pinax.library.model import Item, Library
 from pinax.library.storage import StorageIndex
 from pinax.matching.confirm import TitleConfirmer
 from pinax.matching.model import Verdict
-from pinax.plans.model import AttachOp, ChangePlan, CorrectOp, FileOp, ImportOp
+from pinax.plans.model import AttachOp, ChangePlan, CorrectOp, CreateOp, FileOp, ImportOp
 from pinax.sources.pdf import PdfReader
 from pinax.text import words
 
@@ -86,6 +86,8 @@ class PlanChecker:
         new_parents: dict[str, str] = {}
         for op in plan.imports:
             report.extend(self._import(op, located.get(op.work_id), plan, new_parents))
+        for creation in plan.creations:
+            report.extend(self._create(creation, plan))
         for attach in plan.attachments:
             report.results.append(self._attach(attach))
         for filing in plan.filings:
@@ -93,6 +95,33 @@ class PlanChecker:
         for correction in plan.corrections:
             report.results.append(self._correct(correction))
         return report
+
+    def _create(self, op: CreateOp, plan: ChangePlan) -> list[CheckResult]:
+        """Checks of one creation: one live item holds the work, in its destination, titled."""
+        held = [item for item in self._library.regular() if item.holds_work(op.doi, op.title)]
+        if not held:
+            return [CheckResult("create", op.identity, Outcome.FAIL, "no live item holds the work")]
+        if len(held) > 1:
+            keys = ", ".join(item.key for item in held)
+            return [CheckResult("create", op.identity, Outcome.FAIL, f"several items: {keys}")]
+        item = held[0]
+        if " ".join(words(item.title)) != " ".join(words(op.title)):
+            detail = f"{item.key} carries the title `{item.title[:60]}`"
+            return [CheckResult("create", op.identity, Outcome.FAIL, detail)]
+        if op.destination not in item.collections:
+            path = plan.destination(op.destination).path
+            return [
+                CheckResult("create", op.identity, Outcome.FAIL, f"{item.key} is not in {path}")
+            ]
+        results = [CheckResult("create", op.identity, Outcome.PASS, f"held by {item.key}")]
+        later = [plan.destination(key).path for key in op.also if key not in item.collections]
+        if later:
+            detail = f"the next plan files {item.key} into {", ".join(later)}"
+            results.append(CheckResult("create", op.identity, Outcome.NOTE, detail))
+        if op.files and not self._library.pdfs(item.key):
+            detail = f"the next plan attaches {len(op.files)} PDF to {item.key}"
+            results.append(CheckResult("create", op.identity, Outcome.NOTE, detail))
+        return results
 
     def _stored_sha(self, attachment: Item) -> str:
         """SHA-256 of the stored file of an attachment, empty when the file is missing."""

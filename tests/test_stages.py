@@ -16,11 +16,15 @@ from conftest import (
     pdf_attachment,
     pdf_bytes,
 )
+from fake_zotero import FakeZotero
 from pinax import stages
 from pinax.cli import EXIT_ERROR, app
 from pinax.config import load_config
+from pinax.library.client import ZoteroClient
+from pinax.library.connector import Connector
 
 TITLE = "Temporal dynamics of attention in a recurrent network model"
+URL = "http://127.0.0.1:23119"
 NEW_TITLE = "Learning dynamics of deep linear networks under spectral bias"
 
 
@@ -98,7 +102,7 @@ def test_stages_from_inventory_to_export(
     assert routes == {"matched": 1, "imported": 1}
     assert not shared
     evidence = yaml.safe_load((config.workspace / "evidence.yml").read_text(encoding="utf-8"))
-    imported = [e for e in evidence["sources"] if e["route"] == "imported"]
+    imported = [e for e in evidence["files"] if e["route"] == "imported"]
     assert [(e["zotero_item"], e["citation_key"]) for e in imported] == [("NEWITEM1", "roe2020")]
 
 
@@ -129,3 +133,76 @@ def test_cli_prints_the_configuration_merged_over_the_defaults(tmp_path: Path) -
     assert printed["matching"]["title_words"] == 6
     assert printed["matching"]["opening_words"] == 80
     assert printed["sources"]["pages"] == 2
+
+
+RECORDS = """
+@article{doe2001,
+  title = {An Existing Synthetic Work},
+  author = {Doe, Jane},
+  year = {2001},
+  doi = {10.5555/old}
+}
+@article{roe2020,
+  title = {A Synthetic Work To Create},
+  author = {Roe, Ann},
+  journal = {Journal of Examples},
+  year = {2020},
+  doi = {10.5555/new}
+}
+"""
+
+
+def _fake_snapshot(directory: Path, zotero: FakeZotero) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "items.json").write_text(json.dumps(zotero.items), encoding="utf-8")
+    collections = json.dumps(zotero.collections())
+    (directory / "collections.json").write_text(collections, encoding="utf-8")
+
+
+def test_records_from_export_to_creation_check_and_evidence(
+    tmp_path: Path, sources: SourceTree, storage: Storage
+) -> None:
+    sources.add("refs/refs.bib", RECORDS.encode())
+    zotero = FakeZotero(
+        items=[
+            api_item(
+                "OLDITEM1",
+                title="An existing synthetic work",
+                DOI="10.5555/old",
+                collections=["BACKGR01"],
+                citationKey="doe2001",
+            )
+        ]
+    )
+    config_path = tmp_path / "pinax.yml"
+    config_path.write_text(
+        f"workspace: ws\nsources: {{root: {sources.root}}}\n"
+        "targets: [{folder: refs, destination: {path: review/background}}]\n"
+        f"library: {{storage: {storage.root}}}\n",
+        encoding="utf-8",
+    )
+    config = load_config(config_path)
+    library_dir = config.workspace / "library"
+    _fake_snapshot(library_dir / "current", zotero)
+
+    assert stages.make_inventory(config, sources.reader)["records"] == 2
+    counts = stages.match(config, "current")
+    assert counts["records matched:doi"] == 1 and counts["records absent:-"] == 1
+    plan = stages.make_plan(config, "current")
+    assert [op.identity for op in plan.creations] == ["doi:10.5555/new"] and not plan.filings
+    client, connector = ZoteroClient(URL, zotero.transport), Connector(URL, zotero.transport)
+    results = stages.create(config, "current", client, connector, None)
+    assert [(r.outcome.value, r.item) for r in results] == [("created", "NEW00001")]
+    assert json.loads((config.workspace / "creation-log.json").read_text())[0]["item"] == "NEW00001"
+
+    _fake_snapshot(library_dir / "after", zotero)
+    report = stages.check(config, "after", sources.reader, None)
+    assert report.passed, report.to_json()
+    stages.match(config, "after")
+    routes, _ = stages.export(config, "after", [config.workspace / "plan.json"], None)
+    assert routes == {"matched": 1, "created": 1}
+    evidence = yaml.safe_load((config.workspace / "evidence.yml").read_text(encoding="utf-8"))
+    assert [(e["key"], e["route"], e["citation_key"]) for e in evidence["records"]] == [
+        ("doe2001", "matched", "doe2001"),
+        ("roe2020", "created", "made1"),
+    ]

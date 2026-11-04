@@ -38,7 +38,7 @@ from pinax.errors import LibraryError
 from pinax.library.client import CONNECTOR_HEADERS, LoopbackService, ZoteroClient
 from pinax.library.model import Item, Library
 from pinax.plans.model import CreateOp
-from pinax.text import normalize_doi, words
+from pinax.text import words
 
 _TARGET_ID = re.compile(r"^[LC]\d+$")
 USER_LIBRARY = "L1"
@@ -190,15 +190,6 @@ class Creation:
         return {**asdict(self), "outcome": self.outcome.value}
 
 
-def _holds(item: Item, op: CreateOp) -> bool:
-    """Whether a live regular item holds the identity of a creation."""
-    if item.deleted or not item.is_regular:
-        return False
-    if op.doi:
-        return normalize_doi(op.doi) in item.dois
-    return " ".join(words(item.title)) == " ".join(words(op.title))
-
-
 class CreationRun:
     """
     Serial creation of the items of a plan.
@@ -236,7 +227,8 @@ class CreationRun:
         """Live items holding the identity of a creation, searched by the opening title words."""
         query = " ".join(words(op.title)[:SEARCH_WORDS])
         entries = self._client.search(query)
-        return [item for item in (Item.from_api(entry) for entry in entries) if _holds(item, op)]
+        found = (Item.from_api(entry) for entry in entries)
+        return [item for item in found if item.holds_work(op.doi, op.title)]
 
     def _verify(self, op: CreateOp, before: set[str]) -> Creation:
         """Read the created item back until it verifies, or until the attempts run out."""

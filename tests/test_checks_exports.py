@@ -2,6 +2,7 @@
 
 from collections.abc import Sequence
 from pathlib import Path
+from typing import Any
 
 import yaml
 
@@ -24,16 +25,20 @@ from pinax.hashing import digest_file
 from pinax.library.model import Library
 from pinax.library.storage import StorageIndex
 from pinax.matching.confirm import TitleConfirmer
-from pinax.matching.model import Match, Method, Status, Verdict
+from pinax.matching.model import Match, Method, RecordMatch, Status, Verdict
 from pinax.plans.model import (
     AttachOp,
     ChangePlan,
     CorrectOp,
+    CreateOp,
     Destination,
     FileOp,
     FileRef,
     ImportOp,
 )
+from pinax.records.model import Record
+from pinax.records.works import group_records
+from pinax.sources.inventory import Inventory
 
 DEST = "DEST0001"
 OTHER_DEST = "DEST0002"
@@ -239,10 +244,10 @@ def test_evidence_routes_and_reference_lists(sources: SourceTree, storage: Stora
     assert by_name["preprint.pdf"].route is Route.PREPRINT_OF
     assert by_name["nokey.pdf"].route is Route.UNRESOLVED
     assert by_name["nothing.pdf"].route is Route.UNRESOLVED
-    text = render_evidence(rows, "# header\n")
+    text = render_evidence(rows, header="# header\n")
     entries = [line for line in text.splitlines() if line.startswith("- {")]
     assert len(entries) == len(inventory.files)
-    evidence = yaml.safe_load(text)["sources"]
+    evidence = yaml.safe_load(text)["files"]
     assert list(evidence[0]) == ["sha256", "folder", "file", "route", "zotero_item", "citation_key"]
     assert [(e["sha256"], e["file"]) for e in evidence] == [(r.sha256, r.name) for r in rows]
     nothing = next(entry for entry in evidence if entry["file"] == "nothing.pdf")
@@ -255,3 +260,75 @@ def test_evidence_routes_and_reference_lists(sources: SourceTree, storage: Stora
     assert references["folders"]["f1"] == ["doe2004", "roe2010", "smith1999"]
     assert references["unresolved"] == ["f2/nokey.pdf", "f2/nothing.pdf"]
     assert shared_keys(rows) == {"doe2004": ["NEWITEM1", "SAMEWRK1"]}
+
+
+def _creation(title: str, doi: str = "", **values: Any) -> CreateOp:
+    return CreateOp(
+        f"doi:{doi}" if doi else f"title:{title}", title, doi, {}, DEST, ("r.bib#1",), **values
+    )
+
+
+def test_checks_of_creations(storage: Storage) -> None:
+    lib = library(
+        [
+            api_item(
+                "MADE0001", title="A synthetic made work", DOI="10.5555/m", collections=[DEST]
+            ),
+            api_item("ELSE0001", title="An elsewhere work", collections=["ELSEWH01"]),
+            api_item("TWIN0001", title="A twin work"),
+            api_item("TWIN0002", title="A twin work"),
+        ]
+    )
+    plan = ChangePlan(
+        DESTINATIONS,
+        creations=(
+            _creation("A Synthetic Made Work", "10.5555/m", also=(OTHER_DEST,), files=("ab",)),
+            _creation("An Elsewhere Work"),
+            _creation("A Twin Work"),
+            _creation("A Missing Work"),
+        ),
+    )
+    results = _checker(lib, storage, FakeReader()).check(plan).results
+    assert _results(results, "doi:10.5555/m") == [
+        ("pass", "held by MADE0001"),
+        ("note", "the next plan files MADE0001 into methods"),
+        ("note", "the next plan attaches 1 PDF to MADE0001"),
+    ]
+    assert _results(results, "title:An Elsewhere Work") == [
+        ("fail", "ELSE0001 is not in background")
+    ]
+    assert _results(results, "title:A Twin Work") == [("fail", "several items: TWIN0001, TWIN0002")]
+    assert _results(results, "title:A Missing Work") == [("fail", "no live item holds the work")]
+
+
+def test_evidence_of_records_reaches_created_and_matched_items(storage: Storage) -> None:
+    records = [
+        Record("f1/refs.bib", 1, "made", "journalArticle", "A Made Work", doi="10.5555/m"),
+        Record("f1/refs.bib", 2, "old", "journalArticle", "An Old Work"),
+        Record("f2/dois.txt", 1, "", "", "", doi="10.5555/m"),
+        Record("f2/dois.txt", 2, "", "", "", doi="10.5555/none"),
+    ]
+    inventory = Inventory(Path("/synthetic"), [], {}, records)
+    lib = library(
+        [
+            api_item("MADE0001", title="A made work", DOI="10.5555/m", citationKey="made2001"),
+            api_item("OLDITEM1", title="An old work", citationKey="old1999"),
+        ]
+    )
+    plan = ChangePlan(DESTINATIONS, creations=(_creation("A Made Work", "10.5555/m"),))
+    old = next(w for w in group_records(records) if w.identity.startswith("title:"))
+    matches = [RecordMatch(old.identity, old.refs, Status.MATCHED, "OLDITEM1", Method.TITLE)]
+    rows = EvidenceBuilder(lib, StorageIndex(storage.root), [plan]).build_records(
+        inventory, matches
+    )
+    assert [(r.label, r.route.value, r.citation_key) for r in rows] == [
+        ("f1/refs.bib#1", "created", "made2001"),
+        ("f1/refs.bib#2", "matched", "old1999"),
+        ("f2/dois.txt#1", "created", "made2001"),
+        ("f2/dois.txt#2", "unresolved", ""),
+    ]
+    evidence = yaml.safe_load(render_evidence([], rows))
+    assert evidence["files"] == [] and evidence["records"][1]["key"] == "old"
+    references = yaml.safe_load(render_references(rows, "# header\n"))
+    assert references["folders"] == {"f1": ["made2001", "old1999"], "f2": ["made2001"]}
+    assert references["unresolved"] == ["f2/dois.txt#2"]

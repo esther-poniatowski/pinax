@@ -38,7 +38,7 @@ from pinax.artifacts import read_json, write_json, write_text
 from pinax.checks.model import Report
 from pinax.checks.operations import PlanChecker, check_log, read_log
 from pinax.config import Config
-from pinax.exports.evidence import EvidenceBuilder, render_evidence
+from pinax.exports.evidence import EvidenceBuilder, EvidenceRow, RecordRow, render_evidence
 from pinax.exports.references import DEFAULT_HEADER, render_references, shared_keys
 from pinax.library.client import ZoteroClient
 from pinax.library.connector import Connector, Creation, CreationRun, numeric_targets
@@ -262,17 +262,20 @@ def export(
     Returns
     -------
     tuple[Counter[str], dict[str, list[str]]]
-        Count of each route, and the citation keys carried by several items.
+        Count of each route over the files and the records, and the citation keys carried by
+        several items.
     """
     workspace = _workspace(config)
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
     inventory = _inventory(workspace)
-    matches = matches_from_json(read_json(workspace.require(workspace.matches, "match")))
+    data = read_json(workspace.require(workspace.matches, "match"))
     builder = EvidenceBuilder(
         library, StorageIndex(config.library.storage), [_plan(path) for path in plans]
     )
-    rows = builder.build(inventory, matches)
-    write_text(workspace.evidence, render_evidence(rows))
+    rows = builder.build(inventory, matches_from_json(data))
+    records = builder.build_records(inventory, record_matches_from_json(data))
+    write_text(workspace.evidence, render_evidence(rows, records))
     text = header.read_text(encoding="utf-8") if header else DEFAULT_HEADER
-    write_text(workspace.references, render_references(rows, text))
-    return Counter(row.route.value for row in rows), shared_keys(rows)
+    every: list[EvidenceRow | RecordRow] = [*rows, *records]
+    write_text(workspace.references, render_references(every, text))
+    return Counter(row.route.value for row in every), shared_keys(every)

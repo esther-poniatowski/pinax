@@ -4,7 +4,8 @@ Fake of the Zotero desktop application, for the tests of the connector route.
 The fake serves the local API (items, collections, quick search) and the four connector endpoints
 that Pinax calls. It reproduces the behaviour that the route must withstand: `saveItems` ignores
 its target and files the item into the collection selected in the interface, and `updateSession`
-moves the last item of its session.
+moves the last item of its session. A created item receives a citation key at once, as Better
+BibTeX gives one shortly after the creation.
 """
 
 from dataclasses import dataclass, field
@@ -96,7 +97,7 @@ class FakeZotero:  # pylint: disable=too-many-instance-attributes
             self._created += 1
             key = f"NEW{self._created:05d}"
             data = {k: v for k, v in item.items() if k not in ("creators", "tags", "attachments")}
-            data.update(key=key, collections=[self.selected])
+            data.update(key=key, collections=[self.selected], citationKey=f"made{self._created}")
             data["creators"] = [{**c, "creatorType": "author"} for c in item["creators"]]
             self.items.append({"key": key, "data": data})
             self._sessions[payload["sessionID"]] = key

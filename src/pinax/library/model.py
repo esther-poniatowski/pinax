@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 import re
 from typing import Any
 
-from pinax.text import normalize_doi
+from pinax.text import normalize_doi, words
 
 NON_REGULAR_TYPES = frozenset({"attachment", "note", "annotation"})
 """Item types that are not references: they hang under a regular item or stand alone."""
@@ -140,6 +140,28 @@ class Item:  # pylint: disable=too-many-instance-attributes
     def venue(self) -> str:
         """First non-empty field of `VENUE_FIELDS`."""
         return next((self.get(name) for name in VENUE_FIELDS if self.get(name)), "")
+
+    def holds_work(self, doi: str, title: str) -> bool:
+        """
+        Whether the item is a live regular item holding a work, by its DOI or else by its title.
+
+        Parameters
+        ----------
+        doi : str
+            DOI of the work, empty when the work has none.
+        title : str
+            Title of the work, compared after folding case and accents when the work has no DOI.
+
+        Returns
+        -------
+        bool
+            True when the item records the DOI, or, without a DOI, carries the same title.
+        """
+        if self.deleted or not self.is_regular:
+            return False
+        if doi:
+            return normalize_doi(doi) in self.dois
+        return " ".join(words(self.title)) == " ".join(words(title))
 
     @classmethod
     def from_api(cls, entry: Mapping[str, Any]) -> "Item":

@@ -1,5 +1,6 @@
 """
-Reference list of each source folder: the citation keys of the items holding its files.
+Reference list of each source folder: the citation keys of the items holding its files and the
+records of its exports.
 
 Functions
 ---------
@@ -13,24 +14,25 @@ from collections.abc import Sequence
 
 import yaml
 
-from pinax.exports.evidence import EvidenceRow, Route
+from pinax.exports.evidence import EvidenceRow, RecordRow, Route
 
 DEFAULT_HEADER = (
-    "# Citation keys of the items that hold the files of each source folder, written by pinax.\n"
+    "# Citation keys of the items that hold the files and records of each source folder, written\n"
+    "# by pinax.\n"
     "# Fields:\n"
     "#   folders     one sorted list of citation keys per folder\n"
-    "#   unresolved  the files that no item with a citation key holds\n"
+    "#   unresolved  the files and records that no item with a citation key holds\n"
 )
 
 
-def render_references(rows: Sequence[EvidenceRow], header: str = DEFAULT_HEADER) -> str:
+def render_references(rows: Sequence[EvidenceRow | RecordRow], header: str = DEFAULT_HEADER) -> str:
     """
-    Render the citation keys of each folder and the unresolved files as YAML.
+    Render the citation keys of each folder and the unresolved sources as YAML.
 
     Parameters
     ----------
-    rows : Sequence[EvidenceRow]
-        Evidence rows.
+    rows : Sequence[EvidenceRow | RecordRow]
+        Evidence rows of the files and of the records.
     header : str
         Comment block written before the data; the consumer supplies its own provenance.
 
@@ -43,7 +45,7 @@ def render_references(rows: Sequence[EvidenceRow], header: str = DEFAULT_HEADER)
     unresolved: list[str] = []
     for row in rows:
         if row.route is Route.UNRESOLVED:
-            unresolved.append(f"{row.folder}/{row.name}")
+            unresolved.append(row.label)
         else:
             folders.setdefault(row.folder, set()).add(row.citation_key)
     data = {
@@ -54,14 +56,14 @@ def render_references(rows: Sequence[EvidenceRow], header: str = DEFAULT_HEADER)
     return (header.rstrip("\n") + "\n" if header else "") + body
 
 
-def shared_keys(rows: Sequence[EvidenceRow]) -> dict[str, list[str]]:
+def shared_keys(rows: Sequence[EvidenceRow | RecordRow]) -> dict[str, list[str]]:
     """
     Citation keys carried by several items.
 
     Parameters
     ----------
-    rows : Sequence[EvidenceRow]
-        Evidence rows.
+    rows : Sequence[EvidenceRow | RecordRow]
+        Evidence rows of the files and of the records.
 
     Returns
     -------

@@ -37,7 +37,7 @@ class CheckResult:
     Attributes
     ----------
     operation : str
-        Kind of operation: `import`, `attach`, `file`, `correct` or `log`.
+        Kind of operation: `import`, `create`, `attach`, `file`, `correct` or `log`.
     target : str
         Item key or work identity.
     outcome : Outcome
