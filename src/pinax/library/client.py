@@ -11,6 +11,8 @@ Transport
     Protocol of the function that performs one HTTP request.
 Response
     Status, headers and body of one HTTP response.
+LoopbackService
+    Base of the clients of the desktop application, on the loopback interface.
 ZoteroClient
     Read-only client of one Zotero desktop application.
 
@@ -133,9 +135,9 @@ def require_loopback(url: str) -> str:
     return url.rstrip("/")
 
 
-class ZoteroClient:
+class LoopbackService:
     """
-    Read-only client of one Zotero desktop application.
+    Base of the clients of the desktop application, on the loopback interface.
 
     Parameters
     ----------
@@ -154,20 +156,35 @@ class ZoteroClient:
         self._transport = transport
         self._timeout = timeout
 
-    def _get(self, path: str) -> Response:
-        """GET a path of the local API."""
-        request = urllib.request.Request(
-            f"{self.base_url}/api/{path}", headers=API_VERSION_HEADER, method="GET"
-        )
-        return self._transport(request, self._timeout)
-
     def _post(self, path: str, payload: Any, headers: dict[str, str]) -> Response:
-        """POST a JSON payload to a read-only endpoint outside the local API."""
+        """POST a JSON payload to a path outside the local API."""
         request = urllib.request.Request(
             f"{self.base_url}/{path}",
             data=json.dumps(payload).encode("utf-8"),
             headers=headers,
             method="POST",
+        )
+        return self._transport(request, self._timeout)
+
+
+class ZoteroClient(LoopbackService):
+    """
+    Read-only client of one Zotero desktop application.
+
+    Parameters
+    ----------
+    base_url : str
+        Base URL of the application, on a loopback host.
+    transport : Transport
+        Function performing the requests; tests inject a fake.
+    timeout : float
+        Timeout of each request, in seconds.
+    """
+
+    def _get(self, path: str) -> Response:
+        """GET a path of the local API."""
+        request = urllib.request.Request(
+            f"{self.base_url}/api/{path}", headers=API_VERSION_HEADER, method="GET"
         )
         return self._transport(request, self._timeout)
 
@@ -240,6 +257,22 @@ class ZoteroClient:
     def collections(self) -> list[dict[str, Any]]:
         """Every collection of the user library."""
         return self.paged("users/0/collections")
+
+    def search(self, query: str) -> list[dict[str, Any]]:
+        """
+        Items of the user library that the quick search of Zotero finds for a query.
+
+        Parameters
+        ----------
+        query : str
+            Words searched in the titles, creators and years.
+
+        Returns
+        -------
+        list[dict[str, Any]]
+            Entries found, trashed items included.
+        """
+        return self.paged(f"users/0/items?q={urllib.parse.quote(query)}&includeTrashed=1")
 
     def citation_keys(self, keys: Sequence[str]) -> dict[str, str]:
         """

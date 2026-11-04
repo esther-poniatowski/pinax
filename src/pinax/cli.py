@@ -16,6 +16,7 @@ match : Match each content with a snapshot.
 plan : Build the change plan and its worklist.
 stage : Stage the files to import.
 script : Generate the Zotero script of the plan.
+create : Create the items of the plan through the connector.
 check : Check the plan against a snapshot taken after the change.
 export : Write the evidence file and the reference list of each folder.
 
@@ -39,6 +40,7 @@ from pinax.checks.model import Outcome
 from pinax.config import Config, effective_data, load_config
 from pinax.errors import PinaxError
 from pinax.library.client import ZoteroClient
+from pinax.library.connector import Connector, Outcome as CreationOutcome
 from pinax.sources.pdf import PopplerReader
 
 app = typer.Typer(add_completion=False, no_args_is_help=True)
@@ -190,6 +192,31 @@ def cli_script(config: ConfigOption = Path("pinax.yml")) -> None:
     except PinaxError as error:
         raise _fail(error) from error
     typer.echo(f"script written to {path}")
+
+
+@app.command("create")
+def cli_create(
+    config: ConfigOption = Path("pinax.yml"),
+    snapshot: LabelOption = "current",
+    limit: Annotated[
+        int | None, typer.Option("--limit", min=1, help="Largest number of items to create.")
+    ] = None,
+) -> None:
+    """Create the records of the plan through the connector, verifying each item."""
+    settings = _load(config)
+    api = settings.library.api
+    try:
+        results = stages.create(settings, snapshot, ZoteroClient(api), Connector(api), limit)
+    except PinaxError as error:
+        raise _fail(error) from error
+    for result in results:
+        typer.echo(
+            "\t".join([result.outcome.value, result.identity, result.item or NONE, result.detail])
+        )
+    counts = Counter(result.outcome.value for result in results)
+    typer.echo(f"creations: {_counts(counts) or "none"}")
+    if any(r.outcome in (CreationOutcome.FAILED, CreationOutcome.AMBIGUOUS) for r in results):
+        raise typer.Exit(EXIT_FAILED_CHECKS)
 
 
 @app.command("check")

@@ -69,6 +69,11 @@ class Workspace:
         return self.root / "check-report.json"
 
     @property
+    def creation_log(self) -> Path:
+        """Log of the last run of the creations through the connector."""
+        return self.root / "creation-log.json"
+
+    @property
     def evidence(self) -> Path:
         """File mapping each source file to its item and citation key."""
         return self.root / "evidence.yml"

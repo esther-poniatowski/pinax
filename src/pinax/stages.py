@@ -21,6 +21,8 @@ stage_imports(config) -> tuple[Path, int]
     Stage the files to import.
 write_script(config) -> Path
     Generate the Zotero script of the plan.
+create(config, label, client, connector, limit) -> list[Creation]
+    Create the items of the plan through the connector.
 check(config, label, reader, log) -> Report
     Check the plan against a snapshot taken after the change.
 export(config, label, plans, header) -> tuple[Counter[str], dict[str, list[str]]]
@@ -39,6 +41,7 @@ from pinax.config import Config
 from pinax.exports.evidence import EvidenceBuilder, render_evidence
 from pinax.exports.references import DEFAULT_HEADER, render_references, shared_keys
 from pinax.library.client import ZoteroClient
+from pinax.library.connector import Connector, Creation, CreationRun, numeric_targets
 from pinax.library.snapshot import load_snapshot, take_snapshot
 from pinax.library.storage import StorageIndex
 from pinax.matching.confirm import TitleConfirmer
@@ -197,6 +200,38 @@ def write_script(config: Config) -> Path:
     plan = _plan(workspace.require(workspace.plan, "plan"))
     write_text(workspace.script, ScriptGenerator().render(plan))
     return workspace.script
+
+
+def create(
+    config: Config,
+    label: str,
+    client: ZoteroClient,
+    connector: Connector,
+    limit: int | None,
+) -> list[Creation]:
+    """
+    Create the items of the plan through the connector, one item per session.
+
+    The connector targets are read from the application, and checked against the snapshot that the
+    plan was built from, before any write. The log is written after each item.
+
+    Returns
+    -------
+    list[Creation]
+        One result per creation attempted; the run stops at the first failure or ambiguous outcome.
+    """
+    workspace = _workspace(config)
+    plan = _plan(workspace.require(workspace.plan, "plan"))
+    if not plan.creations:
+        return []
+    library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
+    targets = numeric_targets(connector.selected_collection(), library)
+    run = CreationRun(client, connector, targets)
+    return run.run(
+        plan.creations,
+        limit,
+        lambda results: write_json(workspace.creation_log, [r.to_json() for r in results]),
+    )
 
 
 def check(config: Config, label: str, reader: PdfReader, log: Path | None) -> Report:
