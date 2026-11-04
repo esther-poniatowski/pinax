@@ -38,6 +38,7 @@ from pinax.artifacts import read_json, write_json, write_text
 from pinax.checks.model import Report
 from pinax.checks.operations import PlanChecker, check_log, read_log
 from pinax.config import Config
+from pinax.errors import LibraryError
 from pinax.exports.evidence import EvidenceBuilder, EvidenceRow, RecordRow, render_evidence
 from pinax.exports.references import DEFAULT_HEADER, render_references, shared_keys
 from pinax.library.client import ZoteroClient
@@ -212,8 +213,9 @@ def create(
     """
     Create the items of the plan through the connector, one item per session.
 
-    The connector targets are read from the application, and checked against the snapshot that the
-    plan was built from, before any write. The log is written after each item.
+    The connector is probed, and its answer recorded in the log, before any write; its targets are
+    read from the application and checked against the snapshot that the plan was built from. The
+    log holds the probe and the results, and is written after each item.
 
     Returns
     -------
@@ -225,13 +227,18 @@ def create(
     if not plan.creations:
         return []
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
+    versions = connector.ping()
+    if not isinstance(versions, dict):
+        raise LibraryError(f"unexpected answer of the connector ping: {str(versions)[:120]}")
     targets = numeric_targets(connector.selected_collection(), library)
     run = CreationRun(client, connector, targets)
-    return run.run(
-        plan.creations,
-        limit,
-        lambda results: write_json(workspace.creation_log, [r.to_json() for r in results]),
-    )
+
+    def record(results: list[Creation]) -> None:
+        log = {"connector": versions, "creations": [result.to_json() for result in results]}
+        write_json(workspace.creation_log, log)
+
+    record([])
+    return run.run(plan.creations, limit, record)
 
 
 def check(config: Config, label: str, reader: PdfReader, log: Path | None) -> Report:

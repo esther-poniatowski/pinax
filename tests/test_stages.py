@@ -193,7 +193,9 @@ def test_records_from_export_to_creation_check_and_evidence(
     client, connector = ZoteroClient(URL, zotero.transport), Connector(URL, zotero.transport)
     results = stages.create(config, "current", client, connector, None)
     assert [(r.outcome.value, r.item) for r in results] == [("created", "NEW00001")]
-    assert json.loads((config.workspace / "creation-log.json").read_text())[0]["item"] == "NEW00001"
+    log = json.loads((config.workspace / "creation-log.json").read_text(encoding="utf-8"))
+    assert log["connector"] == {"prefs": {"version": "test"}}
+    assert [entry["item"] for entry in log["creations"]] == ["NEW00001"]
 
     _fake_snapshot(library_dir / "after", zotero)
     report = stages.check(config, "after", sources.reader, None)
