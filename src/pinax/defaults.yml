@@ -1,0 +1,25 @@
+# Defaults of the optional keys of a Pinax configuration file.
+#
+# The configuration file of a consumer overrides any key: a mapping is merged key by key, and any
+# other value, a list included, replaces the default. `pinax config` prints the merged result.
+workspace: .pinax
+sources:
+  ignore: [.DS_Store]
+  pages: 2
+library:
+  api: http://127.0.0.1:23119
+  storage: ~/Zotero/storage
+matching:
+  title_words: 8
+  reject_below: 0.5
+  name_threshold: 0.5
+  year_tolerance: 1
+  opening_words: 80
+  reverse_min_words: 4
+  surname_prefix: 4
+  undated_penalty: 0.1
+  # Quoted: YAML reads a bare `on`, `no` or `yes` as a boolean.
+  stop_words: [the, of, and, a, an, in, "on", to, for, with, by, from, at, as, is, its]
+resolutions: null
+corrections: null
+staging: null

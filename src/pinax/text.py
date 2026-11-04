@@ -10,8 +10,8 @@ fold(text) -> str
     Strip accents and fold case.
 words(text) -> list[str]
     Split a text into the words that titles and pages are compared on.
-content_words(text) -> set[str]
-    Words of `words` without stop words, for overlap scores.
+content_words(text, stop_words) -> set[str]
+    Words of `words` without the given stop words, for overlap scores.
 title_head(title, length) -> str
     Opening words of a title, joined by single spaces.
 contains_sequence(haystack, head) -> bool
@@ -39,12 +39,6 @@ Examples
 
 import re
 import unicodedata
-
-STOP_WORDS = frozenset(
-    {"the", "of", "and", "a", "an", "in", "on", "to", "for", "with", "by", "from", "at", "as", "is"}
-    | {"its"}
-)
-"""Words ignored by overlap scores, since they carry no information about a title."""
 
 MIN_WORD_LENGTH = 3
 """Shortest word kept by `words`: shorter tokens are mostly initials, page numbers or articles."""
@@ -94,21 +88,28 @@ def words(text: str) -> list[str]:
     return [word for word in _SPLIT.split(folded) if len(word) >= MIN_WORD_LENGTH]
 
 
-def content_words(text: str) -> set[str]:
+def content_words(text: str, stop_words: frozenset[str]) -> set[str]:
     """
-    Words of `words` without stop words, for overlap scores.
+    Words of `words` without the given stop words, for overlap scores.
 
     Parameters
     ----------
     text : str
         Title or file name.
+    stop_words : frozenset[str]
+        Folded words that carry no information about a title, such as articles.
 
     Returns
     -------
     set[str]
         Distinct words that are not stop words.
+
+    Examples
+    --------
+    >>> sorted(content_words("The shape of a signal", frozenset({"the", "of"})))
+    ['shape', 'signal']
     """
-    return {word for word in words(text) if word not in STOP_WORDS}
+    return {word for word in words(text) if word not in stop_words}
 
 
 def title_head(title: str, length: int) -> str:

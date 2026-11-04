@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from pinax.config import load_config
+from pinax.config import MatchingConfig, load_config, load_defaults
 from pinax.errors import ConfigError
 from pinax.text import (
     content_words,
@@ -28,13 +28,15 @@ def test_apostrophes_split_words_in_every_form() -> None:
 
 
 def test_content_words_drop_stop_words() -> None:
-    assert content_words("The model of the blink") == {"model", "blink"}
+    assert content_words("The model of the signal", frozenset({"the", "of"})) == {
+        "model",
+        "signal",
+    }
 
 
 def test_title_head_keeps_opening_words() -> None:
     assert (
-        title_head("A sparse model of the example signal in time", 4)
-        == "sparse model the example"
+        title_head("A sparse model of the example signal in time", 4) == "sparse model the example"
     )
 
 
@@ -87,14 +89,39 @@ def test_config_resolves_relative_paths_against_its_file(tmp_path: Path) -> None
     [
         ("sources: {root: r}\nlibrary: {}\n", "library.destination"),
         ("sources: {root: r}\nlibrary: {destination: D}\nextra: 1\n", "unknown keys"),
-        ("library: {destination: D}\n", "missing section `sources`"),
+        ("library: {destination: D}\n", "sources.root"),
         ("sources: {root: r, pages: 0}\nlibrary: {destination: D}\n", "sources.pages"),
         (
             "sources: {root: r}\nlibrary: {destination: D}\nmatching: {title_words: x}\n",
             "title_words",
         ),
+        (
+            "sources: {root: r}\nlibrary: {destination: D}\nmatching: {stop_words: the}\n",
+            "matching.stop_words must be a list",
+        ),
+        ("sources: {root: r}\nlibrary: {destination: D}\nmatching: [1]\n", "must be a mapping"),
     ],
 )
 def test_config_rejects_invalid_files(tmp_path: Path, text: str, message: str) -> None:
     with pytest.raises(ConfigError, match=message):
         load_config(_write(tmp_path / "pinax.yml", text))
+
+
+def test_defaults_set_every_matching_key() -> None:
+    config = MatchingConfig.from_mapping(load_defaults()["matching"])
+    assert config.title_words == 8
+    assert "the" in config.stop_words
+
+
+def test_consumer_overrides_one_key_and_replaces_lists(tmp_path: Path) -> None:
+    path = _write(
+        tmp_path / "pinax.yml",
+        "sources: {root: refs, ignore: [Thumbs.db]}\nlibrary: {destination: D}\n"
+        "matching: {stop_words: [Über, de, la], surname_prefix: 6}\n",
+    )
+    config = load_config(path)
+    assert config.sources.ignore == ("Thumbs.db",)
+    assert config.sources.pages == 2
+    assert config.matching.stop_words == frozenset({"uber", "de", "la"})
+    assert config.matching.surname_prefix == 6
+    assert config.matching.title_words == 8

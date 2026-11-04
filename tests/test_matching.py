@@ -2,7 +2,15 @@
 
 import pytest
 
-from conftest import SourceTree, Storage, api_item, library, pdf_attachment, pdf_bytes
+from conftest import (
+    SourceTree,
+    Storage,
+    api_item,
+    library,
+    matching_config,
+    pdf_attachment,
+    pdf_bytes,
+)
 from pinax.config import MatchingConfig
 from pinax.errors import ArtifactError, ConfigError
 from pinax.library.model import Library
@@ -22,6 +30,7 @@ def _match(
     lib: Library,
     storage: Storage | None = None,
     resolutions: str | None = None,
+    config: MatchingConfig | None = None,
 ) -> dict[str, Match]:
     inventory = sources.inventory()
     stored = StorageIndex(storage.root).by_sha256(c.size for c in inventory) if storage else {}
@@ -30,7 +39,7 @@ def _match(
         path = sources.root.parent / "resolutions.yml"
         path.write_text(resolutions, encoding="utf-8")
         loaded = load_resolutions(path, inventory)
-    matcher = Matcher.build(lib, stored, MatchingConfig(), loaded)
+    matcher = Matcher.build(lib, stored, config or matching_config(), loaded)
     return {inventory.contents[m.sha256].first.name: m for m in matcher.match_all(inventory)}
 
 
@@ -127,6 +136,8 @@ def test_name_match_accepts_garbled_surnames_and_invalid_years(sources: SourceTr
     )
     match = _match(sources, lib)[name]
     assert (match.status, match.item, match.method) == (Status.MATCHED, "ITEM0001", Method.NAME)
+    strict = _match(sources, lib, config=matching_config(surname_prefix=20))[name]
+    assert (strict.status, strict.method) == (Status.CHECK, Method.REVERSE)
 
 
 def test_reverse_search_confirms_only_a_title_that_opens_the_file(sources: SourceTree) -> None:

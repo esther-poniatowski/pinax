@@ -99,7 +99,7 @@ class Matcher:
         sources: list[CandidateSource] = [
             SameFileSource(library, stored),
             DoiSource(library),
-            NameSource(library, config.name_threshold, config.year_tolerance),
+            NameSource(library, config),
         ]
         return cls(
             library,

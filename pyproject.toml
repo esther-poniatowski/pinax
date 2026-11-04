@@ -50,6 +50,9 @@ package-dir = {"" = "src"}
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+pinax = ["defaults.yml"]
+
 # --- CLI Entry Points -----------------------------------------------------------------------------
 
 [project.scripts]

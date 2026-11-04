@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 
 from typer.testing import CliRunner
+import yaml
 
 from conftest import (
     SourceTree,
@@ -109,3 +110,17 @@ def test_cli_reports_missing_artifacts_and_invalid_configs(tmp_path: Path) -> No
     result = runner.invoke(app, ["script", "--config", str(config)])
     assert result.exit_code == EXIT_ERROR
     assert "run `pinax plan` first" in result.output
+
+
+def test_cli_prints_the_configuration_merged_over_the_defaults(tmp_path: Path) -> None:
+    config = tmp_path / "pinax.yml"
+    config.write_text(
+        "sources: {root: s}\nlibrary: {destination: D}\nmatching: {title_words: 6}\n",
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(app, ["config", "--config", str(config)])
+    assert result.exit_code == 0, result.output
+    printed = yaml.safe_load(result.output)
+    assert printed["matching"]["title_words"] == 6
+    assert printed["matching"]["opening_words"] == 80
+    assert printed["sources"]["pages"] == 2

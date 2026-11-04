@@ -2,8 +2,10 @@
 Configuration of one reconciliation, read from a YAML file.
 
 One file declares the folder of sources, the library and its collections, the parameters of the
-matching, and the files of resolutions and corrections. Relative paths resolve against the
-directory of the configuration file, never against the current directory.
+matching, and the files of resolutions and corrections. The file is merged over the defaults
+shipped with the package, `defaults.yml`, which hold every optional key; the code holds no default
+value. Relative paths resolve against the directory of the configuration file, never against the
+current directory.
 
 Classes
 -------
@@ -18,20 +20,28 @@ Config
 
 Functions
 ---------
+load_defaults() -> dict[str, Any]
+    Defaults shipped with the package.
+merge(base, override) -> dict[str, Any]
+    Mapping of `base` overridden by `override`, merged key by key.
+effective_data(path) -> dict[str, Any]
+    Configuration file merged over the defaults, before validation.
 load_config(path) -> Config
     Read and validate a configuration file.
 """
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, fields
+from importlib import resources
 from pathlib import Path
-from typing import Any
+from typing import Any, get_origin
 
 import yaml
 
 from pinax.errors import ConfigError
+from pinax.text import fold
 
-DEFAULT_API = "http://127.0.0.1:23119"
-DEFAULT_STORAGE = "~/Zotero/storage"
+DEFAULTS = "defaults.yml"
+"""Package resource holding the default of every optional key."""
 
 
 @dataclass(frozen=True)
@@ -52,9 +62,9 @@ class SourcesConfig:
     """
 
     root: Path
-    folders: tuple[str, ...] = ()
-    ignore: tuple[str, ...] = (".DS_Store",)
-    pages: int = 2
+    folders: tuple[str, ...]
+    ignore: tuple[str, ...]
+    pages: int
 
 
 @dataclass(frozen=True)
@@ -75,8 +85,8 @@ class LibraryConfig:
     """
 
     destination: str
-    api: str = DEFAULT_API
-    storage: Path = Path(DEFAULT_STORAGE).expanduser()
+    api: str
+    storage: Path
     scope: str = ""
 
     @property
@@ -86,7 +96,7 @@ class LibraryConfig:
 
 
 @dataclass(frozen=True)
-class MatchingConfig:
+class MatchingConfig:  # pylint: disable=too-many-instance-attributes
     """
     Thresholds of the matching and of the confirmation by title.
 
@@ -106,14 +116,53 @@ class MatchingConfig:
         reverse search to confirm it; a title found later is a citation.
     reverse_min_words : int
         Shortest title, in words, that the reverse search looks for.
+    surname_prefix : int
+        Shortest surname or file-name word compared by prefix, so that a garbled surname still
+        matches; shorter words must be equal.
+    undated_penalty : float
+        Score removed from a match by name when the year cannot be compared, so that a dated
+        match wins a tie.
+    stop_words : frozenset[str]
+        Words ignored by the overlap of a file name with a title, folded like the words compared.
     """
 
-    title_words: int = 8
-    reject_below: float = 0.5
-    name_threshold: float = 0.5
-    year_tolerance: int = 1
-    opening_words: int = 80
-    reverse_min_words: int = 4
+    title_words: int
+    reject_below: float
+    name_threshold: float
+    year_tolerance: int
+    opening_words: int
+    reverse_min_words: int
+    surname_prefix: int
+    undated_penalty: float
+    stop_words: frozenset[str]
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any]) -> "MatchingConfig":
+        """
+        Validated section `matching`, merged over the defaults.
+
+        Parameters
+        ----------
+        data : dict[str, Any]
+            Section holding every field of the class.
+
+        Returns
+        -------
+        MatchingConfig
+            Thresholds; each value takes the type of its field.
+
+        Raises
+        ------
+        ConfigError
+            If a key is unknown or missing, or a value has the wrong type.
+        """
+        known = {item.name for item in fields(cls)}
+        _reject_unknown(data, known, "matching")
+        missing = sorted(known - set(data))
+        if missing:
+            raise ConfigError(f"missing keys in matching: {", ".join(missing)}")
+        values = {item.name: _typed(data[item.name], item.type, item.name) for item in fields(cls)}
+        return cls(**values)
 
 
 @dataclass(frozen=True)
@@ -142,10 +191,10 @@ class Config:
     workspace: Path
     sources: SourcesConfig
     library: LibraryConfig
-    matching: MatchingConfig = field(default_factory=MatchingConfig)
-    resolutions: Path | None = None
-    corrections: Path | None = None
-    staging: Path | None = None
+    matching: MatchingConfig
+    resolutions: Path | None
+    corrections: Path | None
+    staging: Path | None
 
 
 def _mapping(value: Any, where: str) -> dict[str, Any]:
@@ -186,17 +235,30 @@ def _reject_unknown(data: dict[str, Any], known: set[str], where: str) -> None:
         raise ConfigError(f"unknown keys in {where}: {", ".join(unknown)}")
 
 
+def _typed(value: Any, expected: Any, name: str) -> Any:
+    """Value of a field of `MatchingConfig` checked against its type; a list becomes a set."""
+    where = f"matching.{name}"
+    if get_origin(expected) is frozenset:
+        if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+            raise ConfigError(f"{where} must be a list of strings")
+        return frozenset(fold(word) for word in value)
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(f"{where} must be of type {expected.__name__}")
+    if expected is int and not isinstance(value, int):
+        raise ConfigError(f"{where} must be of type int")
+    return expected(value)
+
+
 def _sources(data: dict[str, Any], base: Path) -> SourcesConfig:
     """Validated section `sources`."""
     _reject_unknown(data, {"root", "folders", "ignore", "pages"}, "sources")
-    pages = data.get("pages", 2)
-    if not isinstance(pages, int) or pages < 1:
+    pages = data.get("pages")
+    if not isinstance(pages, int) or isinstance(pages, bool) or pages < 1:
         raise ConfigError("sources.pages must be a positive integer")
-    ignore = _strings(data["ignore"], "sources.ignore") if "ignore" in data else (".DS_Store",)
     return SourcesConfig(
         root=_path(data.get("root"), base, "sources.root"),
         folders=_strings(data.get("folders"), "sources.folders"),
-        ignore=ignore,
+        ignore=_strings(data.get("ignore"), "sources.ignore"),
         pages=pages,
     )
 
@@ -210,34 +272,89 @@ def _library(data: dict[str, Any], base: Path) -> LibraryConfig:
     scope = data.get("scope", "")
     if not isinstance(scope, str):
         raise ConfigError("library.scope must be a collection key")
-    api = data.get("api", DEFAULT_API)
+    api = data.get("api")
     if not isinstance(api, str):
         raise ConfigError("library.api must be a URL")
     return LibraryConfig(
         destination=destination,
         api=api.rstrip("/"),
-        storage=_path(data.get("storage", DEFAULT_STORAGE), base, "library.storage"),
+        storage=_path(data.get("storage"), base, "library.storage"),
         scope=scope,
     )
 
 
-def _matching(data: dict[str, Any]) -> MatchingConfig:
-    """Validated section `matching`; each value takes the type of its default."""
-    defaults = MatchingConfig()
-    known = {item.name for item in fields(MatchingConfig)}
-    _reject_unknown(data, known, "matching")
-    values: dict[str, Any] = {}
-    for name in known:
-        if name not in data:
-            continue
-        expected = type(getattr(defaults, name))
-        value = data[name]
-        if expected is float and isinstance(value, int) and not isinstance(value, bool):
-            value = float(value)
-        if not isinstance(value, expected) or isinstance(value, bool):
-            raise ConfigError(f"matching.{name} must be of type {expected.__name__}")
-        values[name] = value
-    return MatchingConfig(**values)
+def load_defaults() -> dict[str, Any]:
+    """
+    Defaults shipped with the package.
+
+    Returns
+    -------
+    dict[str, Any]
+        Content of the resource `defaults.yml`: the default of every optional key.
+    """
+    text = resources.files("pinax").joinpath(DEFAULTS).read_text(encoding="utf-8")
+    return _mapping(yaml.safe_load(text), DEFAULTS)
+
+
+def merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """
+    Mapping of `base` overridden by `override`, merged key by key.
+
+    Parameters
+    ----------
+    base : dict[str, Any]
+        Defaults.
+    override : dict[str, Any]
+        Values of the consumer.
+
+    Returns
+    -------
+    dict[str, Any]
+        New mapping: two mappings under one key are merged recursively, and any other value of
+        `override`, a list included, replaces the value of `base`.
+
+    Examples
+    --------
+    >>> merge({"a": {"x": 1, "y": 2}, "b": [1]}, {"a": {"y": 3}, "b": [2]})
+    {'a': {'x': 1, 'y': 3}, 'b': [2]}
+    """
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def effective_data(path: Path) -> dict[str, Any]:
+    """
+    Configuration file merged over the defaults, before validation.
+
+    Parameters
+    ----------
+    path : Path
+        YAML configuration file.
+
+    Returns
+    -------
+    dict[str, Any]
+        Merged mapping, with paths as written.
+
+    Raises
+    ------
+    ConfigError
+        If the file is missing or is not a YAML mapping.
+    """
+    if not path.is_file():
+        raise ConfigError(f"configuration file not found: {path}")
+    try:
+        data = _mapping(yaml.safe_load(path.read_text(encoding="utf-8")), str(path))
+    except yaml.YAMLError as error:
+        raise ConfigError(f"invalid YAML in {path}: {error}") from error
+    for section in ("sources", "library", "matching"):
+        _mapping(data.get(section), section)
+    return merge(load_defaults(), data)
 
 
 def load_config(path: Path) -> Config:
@@ -259,24 +376,16 @@ def load_config(path: Path) -> Config:
     ConfigError
         If the file is missing, is not YAML, or holds an invalid or unknown key.
     """
-    if not path.is_file():
-        raise ConfigError(f"configuration file not found: {path}")
-    try:
-        data = _mapping(yaml.safe_load(path.read_text(encoding="utf-8")), str(path))
-    except yaml.YAMLError as error:
-        raise ConfigError(f"invalid YAML in {path}: {error}") from error
+    data = effective_data(path)
     base = path.resolve().parent
     known = {"workspace", "sources", "library", "matching", "resolutions", "corrections", "staging"}
     _reject_unknown(data, known, str(path))
-    for section in ("sources", "library"):
-        if section not in data:
-            raise ConfigError(f"missing section `{section}` in {path}")
     return Config(
-        workspace=_path(data.get("workspace", ".pinax"), base, "workspace"),
+        workspace=_path(data["workspace"], base, "workspace"),
         sources=_sources(_mapping(data["sources"], "sources"), base),
         library=_library(_mapping(data["library"], "library"), base),
-        matching=_matching(_mapping(data.get("matching"), "matching")),
-        resolutions=_optional_path(data.get("resolutions"), base, "resolutions"),
-        corrections=_optional_path(data.get("corrections"), base, "corrections"),
-        staging=_optional_path(data.get("staging"), base, "staging"),
+        matching=MatchingConfig.from_mapping(_mapping(data["matching"], "matching")),
+        resolutions=_optional_path(data["resolutions"], base, "resolutions"),
+        corrections=_optional_path(data["corrections"], base, "corrections"),
+        staging=_optional_path(data["staging"], base, "staging"),
     )

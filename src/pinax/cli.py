@@ -7,6 +7,7 @@ command reads the configuration file given by `--config`.
 Commands
 --------
 info : Display diagnostic information.
+config : Print the configuration in effect, merged over the shipped defaults.
 probe : Record the versions of the local API and the connector.
 read : Save a snapshot of the library.
 keys : Compare the citation keys of a snapshot with Better BibTeX.
@@ -31,10 +32,11 @@ import subprocess  # nosec B404
 from typing import Annotated
 
 import typer
+import yaml
 
 from pinax import __version__, info, stages
 from pinax.checks.model import Outcome
-from pinax.config import Config, load_config
+from pinax.config import Config, effective_data, load_config
 from pinax.errors import PinaxError
 from pinax.library.client import ZoteroClient
 from pinax.sources.pdf import PopplerReader
@@ -77,6 +79,17 @@ def _counts(counter: Counter[str]) -> str:
 def cli_info() -> None:
     """Display version and platform diagnostics."""
     typer.echo(info())
+
+
+@app.command("config")
+def cli_config(config: ConfigOption = Path("pinax.yml")) -> None:
+    """Print the configuration in effect: the file merged over the shipped defaults."""
+    _load(config)
+    try:
+        data = effective_data(config)
+    except PinaxError as error:
+        raise _fail(error) from error
+    typer.echo(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), nl=False)
 
 
 @app.command("probe")

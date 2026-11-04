@@ -17,17 +17,13 @@ from collections.abc import Mapping
 import re
 from typing import Protocol
 
+from pinax.config import MatchingConfig
 from pinax.library.model import Item, Library
 from pinax.matching.model import Candidate, Method
 from pinax.sources.inventory import Content
 from pinax.text import content_words
 
 _YEAR_PREFIX = re.compile(r"^\d{4}[a-z]?_")
-MIN_PREFIX = 4
-"""Shortest surname or token compared by prefix: a garbled surname such as `Quellmarkn` still
-matches `quellmark`, while shorter prefixes would match unrelated names."""
-UNDATED_PENALTY = 0.1
-"""Score removed when the year cannot be compared, so that a dated match wins a tie."""
 
 
 class CandidateSource(Protocol):
@@ -106,11 +102,17 @@ class DoiSource:
         return Candidate(keys[0], self.method) if len(keys) == 1 else None
 
 
-def _agrees(surname: str, token: str) -> bool:
-    """Whether a surname and a file-name token are equal, or one prefixes the other."""
+def _agrees(surname: str, token: str, prefix: int) -> bool:
+    """
+    Whether a surname and a file-name token are equal, or one prefixes the other.
+
+    Both words must hold at least `prefix` characters to match by prefix: a garbled surname such
+    as `quellmarkn` then still matches `quellmark`, while short words such as `li` and `lin` stay
+    distinct.
+    """
     if surname == token:
         return True
-    if min(len(surname), len(token)) < MIN_PREFIX:
+    if min(len(surname), len(token)) < prefix:
         return False
     return surname.startswith(token) or token.startswith(surname)
 
@@ -127,43 +129,44 @@ class NameSource:
     ----------
     library : Library
         Library snapshot.
-    threshold : float
-        Lowest overlap score accepted.
-    year_tolerance : int
-        Largest difference between the year of the name and the year of the item.
+    config : MatchingConfig
+        Threshold, year tolerance, surname prefix, penalty of an undated match and stop words.
     """
 
     method = Method.NAME
 
-    def __init__(self, library: Library, threshold: float, year_tolerance: int) -> None:
+    def __init__(self, library: Library, config: MatchingConfig) -> None:
         self._items = list(library.regular())
-        self._threshold = threshold
-        self._year_tolerance = year_tolerance
+        self._config = config
 
     def _score(self, item: Item, year: int | None, tokens: set[str]) -> float | None:
         """Overlap of an item with the name tokens, or None when its year or authors disagree."""
+        config = self._config
         item_year = item.year
         if year is not None and item_year is not None:
-            if abs(item_year - year) > self._year_tolerance:
+            if abs(item_year - year) > config.year_tolerance:
                 return None
-        surnames = {word for name in item.surnames for word in content_words(name)}
-        if not any(_agrees(surname, token) for surname in surnames for token in tokens):
+        surnames = {
+            word for name in item.surnames for word in content_words(name, config.stop_words)
+        }
+        prefix = config.surname_prefix
+        if not any(_agrees(surname, token, prefix) for surname in surnames for token in tokens):
             return None
-        title = content_words(item.title)
+        title = content_words(item.title, config.stop_words)
         overlap = len(title & tokens) / max(1, min(len(title), len(tokens - surnames)))
         if year is None or item_year is None:
-            overlap -= UNDATED_PENALTY
+            overlap -= config.undated_penalty
         return overlap
 
     def propose(self, content: Content) -> Candidate | None:
         """Best-scoring item when its score reaches the threshold; the first item wins a tie."""
         file = content.first
         stem = _YEAR_PREFIX.sub("", file.name.rsplit(".", 1)[0])
-        tokens = content_words(stem.replace("_", " "))
+        tokens = content_words(stem.replace("_", " "), self._config.stop_words)
         year = int(file.year) if file.year else None
         best: Candidate | None = None
         for item in self._items:
             score = self._score(item, year, tokens)
             if score is not None and (best is None or score > best.score):
                 best = Candidate(item.key, self.method, score)
-        return best if best is not None and best.score >= self._threshold else None
+        return best if best is not None and best.score >= self._config.name_threshold else None

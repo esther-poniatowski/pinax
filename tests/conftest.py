@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from pinax.config import SourcesConfig
+from pinax.config import MatchingConfig, SourcesConfig, load_defaults
 from pinax.library.model import Library
 from pinax.sources.inventory import Inventory, build_inventory
 
@@ -93,6 +93,19 @@ def api_collection(key: str, name: str, parent: str | None = None) -> dict[str, 
     return {"key": key, "data": data}
 
 
+def matching_config(**overrides: Any) -> MatchingConfig:
+    """Matching section of the shipped defaults, with some keys overridden."""
+    return MatchingConfig.from_mapping({**load_defaults()["matching"], **overrides})
+
+
+def sources_config(root: Path, folders: Sequence[str] = ()) -> SourcesConfig:
+    """Sources section of the shipped defaults for a root and its folders."""
+    defaults = load_defaults()["sources"]
+    return SourcesConfig(
+        root=root, folders=tuple(folders), ignore=tuple(defaults["ignore"]), pages=defaults["pages"]
+    )
+
+
 def pdf_bytes(marker: str) -> bytes:
     """Bytes of a fake PDF, distinct for each marker."""
     return f"%PDF-1.4 {marker}\n".encode()
@@ -157,7 +170,7 @@ class SourceTree:
 
     def inventory(self, folders: Sequence[str] = ()) -> Inventory:
         """Inventory of the tree."""
-        return build_inventory(SourcesConfig(root=self.root, folders=tuple(folders)), self.reader)
+        return build_inventory(sources_config(self.root, folders), self.reader)
 
 
 @pytest.fixture(name="sources")
