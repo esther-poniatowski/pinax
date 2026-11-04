@@ -12,6 +12,8 @@ words(text) -> list[str]
     Split a text into the words that titles and pages are compared on.
 content_words(text, stop_words) -> set[str]
     Words of `words` without the given stop words, for overlap scores.
+names_agree(name, word, prefix) -> bool
+    Whether two folded name words are equal, or one prefixes the other.
 title_head(title, length) -> str
     Opening words of a title, joined by single spaces.
 contains_sequence(haystack, head) -> bool
@@ -110,6 +112,40 @@ def content_words(text: str, stop_words: frozenset[str]) -> set[str]:
     ['shape', 'signal']
     """
     return {word for word in words(text) if word not in stop_words}
+
+
+def names_agree(name: str, word: str, prefix: int) -> bool:
+    """
+    Whether two folded name words are equal, or one prefixes the other.
+
+    Both words must hold at least `prefix` characters to match by prefix: a garbled surname such
+    as `quellmarkn` then still matches `quellmark`, while short words such as `lin` and `linn` stay
+    distinct.
+
+    Parameters
+    ----------
+    name : str
+        Word of a surname.
+    word : str
+        Word of a file name or of another surname.
+    prefix : int
+        Shortest length compared by prefix.
+
+    Returns
+    -------
+    bool
+        True when the words are equal, or when both are long enough and one starts the other.
+
+    Examples
+    --------
+    >>> names_agree("quellmark", "quellmarkn", 4), names_agree("lin", "linn", 4)
+    (True, False)
+    """
+    if name == word:
+        return True
+    if min(len(name), len(word)) < prefix:
+        return False
+    return name.startswith(word) or word.startswith(name)
 
 
 def title_head(title: str, length: int) -> str:

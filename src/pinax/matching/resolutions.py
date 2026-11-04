@@ -1,8 +1,9 @@
 """
 Manual resolutions of matches, read from a YAML file.
 
-A resolution records a decision taken by reading a file, for a content that the automatic routes
-match wrongly or cannot confirm. The file holds a list under `resolutions`:
+A resolution records a decision taken by reading a file or a record, for a content or a record work
+that the automatic routes match wrongly or cannot confirm. The file holds a list under
+`resolutions`, each entry naming either a `file` or a `record`:
 
 .. code-block:: yaml
 
@@ -11,6 +12,9 @@ match wrongly or cannot confirm. The file holds a list under `resolutions`:
         action: reject               # reject | accept | assign | preprint-of
         item: ABCD2345               # required by assign and preprint-of
         note: the DOI on page 1 is the DOI of a cited article
+      - record: refs/export.bib#3    # export file and position, or an identity such as `doi:`
+        action: assign
+        item: EFGH6789
 
 Classes
 -------
@@ -19,7 +23,7 @@ Action
 Resolution
     Decision on one content.
 Resolutions
-    Resolutions by SHA-256 of the content they concern.
+    Resolutions by SHA-256 of the content, or by identity of the record work, they concern.
 
 Functions
 ---------
@@ -36,10 +40,12 @@ import re
 import yaml
 
 from pinax.errors import ConfigError
+from pinax.records.model import Record
 from pinax.sources.inventory import Content, Inventory
+from pinax.text import normalize_doi
 
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
-_KNOWN = {"file", "action", "item", "note"}
+_KNOWN = {"file", "record", "action", "item", "note"}
 
 
 class Action(StrEnum):
@@ -79,23 +85,34 @@ class Resolution:
 
 class Resolutions:
     """
-    Resolutions by SHA-256 of the content they concern.
+    Resolutions by SHA-256 of the content, or by identity of the record work, they concern.
 
     Parameters
     ----------
     entries : dict[str, Resolution]
         Resolution of each content.
+    records : dict[str, Resolution]
+        Resolution of each record work, by identity.
     """
 
-    def __init__(self, entries: dict[str, Resolution] | None = None) -> None:
+    def __init__(
+        self,
+        entries: dict[str, Resolution] | None = None,
+        records: dict[str, Resolution] | None = None,
+    ) -> None:
         self._entries = dict(entries or {})
+        self._records = dict(records or {})
 
     def get(self, sha256: str) -> Resolution | None:
         """Resolution of a content, if any."""
         return self._entries.get(sha256)
 
+    def record(self, identity: str) -> Resolution | None:
+        """Resolution of a record work, if any."""
+        return self._records.get(identity)
+
     def __len__(self) -> int:
-        return len(self._entries)
+        return len(self._entries) + len(self._records)
 
 
 def _resolve_target(reference: str, contents: Iterable[Content]) -> str:
@@ -112,6 +129,34 @@ def _resolve_target(reference: str, contents: Iterable[Content]) -> str:
         state = "no file" if not found else f"{len(found)} distinct contents"
         raise ConfigError(f"resolution target `{reference}` names {state}; use its relative path")
     return found.pop()
+
+
+def _resolve_record(reference: str, records: Iterable[Record]) -> str:
+    """Identity named by a reference: the reference of one record, or an identity of a work."""
+    records = list(records)
+    if reference.startswith("doi:"):
+        reference = f"doi:{normalize_doi(reference.removeprefix("doi:"))}"
+    identities = {record.identity for record in records}
+    if reference in identities:
+        return reference
+    found = {record.identity for record in records if record.ref == reference}
+    if not found:
+        raise ConfigError(f"resolution target `{reference}` names no record or work of records")
+    return found.pop()
+
+
+def _resolution(entry: dict[str, object], where: str) -> Resolution:
+    """Decision of an entry: its action, its item, which `assign` and `preprint-of` require, and
+    its note."""
+    try:
+        action = Action(str(entry.get("action")))
+    except ValueError as error:
+        choices = ", ".join(a.value for a in Action)
+        raise ConfigError(f"{where}: `action` must be one of {choices}") from error
+    item = str(entry.get("item") or "")
+    if action in (Action.ASSIGN, Action.PREPRINT_OF) and not item:
+        raise ConfigError(f"{where}: `{action.value}` requires an `item`")
+    return Resolution(action, item, str(entry.get("note") or ""))
 
 
 def load_resolutions(path: Path | None, inventory: Inventory) -> Resolutions:
@@ -134,7 +179,8 @@ def load_resolutions(path: Path | None, inventory: Inventory) -> Resolutions:
     ------
     ConfigError
         If the file or an entry holds an unknown key, an entry is malformed, names no unique
-        content or lacks a required item, or two entries concern the same content.
+        content or record work or lacks a required item, or two entries concern the same content
+        or work.
     """
     if path is None:
         return Resolutions()
@@ -147,25 +193,26 @@ def load_resolutions(path: Path | None, inventory: Inventory) -> Resolutions:
     if not isinstance(entries, list):
         raise ConfigError(f"{path} must hold a list under `resolutions`")
     resolved: dict[str, Resolution] = {}
+    by_record: dict[str, Resolution] = {}
     for index, entry in enumerate(entries):
         where = f"{path}: resolution {index + 1}"
-        if not isinstance(entry, dict) or not isinstance(entry.get("file"), str):
-            raise ConfigError(f"{where} must name a `file`")
+        named = [key for key in ("file", "record") if isinstance(entry, dict) and key in entry]
+        if len(named) != 1 or not isinstance(entry[named[0]], str):
+            raise ConfigError(f"{where} must name exactly one `file` or `record`")
         unknown = sorted(set(entry) - _KNOWN)
         if unknown:
             raise ConfigError(f"{where}: unknown keys {", ".join(unknown)}")
-        try:
-            action = Action(str(entry.get("action")))
-        except ValueError as error:
-            choices = ", ".join(a.value for a in Action)
-            raise ConfigError(f"{where}: `action` must be one of {choices}") from error
-        item = str(entry.get("item") or "")
-        if action in (Action.ASSIGN, Action.PREPRINT_OF) and not item:
-            raise ConfigError(f"{where}: `{action.value}` requires an `item`")
+        resolution = _resolution(entry, where)
+        if named[0] == "record":
+            identity = _resolve_record(entry["record"], inventory.records)
+            if identity in by_record:
+                raise ConfigError(f"{where}: a second resolution for the work {identity}")
+            by_record[identity] = resolution
+            continue
         sha = _resolve_target(entry["file"], inventory)
         if not _SHA256.match(sha) or sha not in inventory.contents:
             raise ConfigError(f"{where}: no content {sha} in the inventory")
         if sha in resolved:
             raise ConfigError(f"{where}: a second resolution for `{entry["file"]}`")
-        resolved[sha] = Resolution(action, item, str(entry.get("note") or ""))
-    return Resolutions(resolved)
+        resolved[sha] = resolution
+    return Resolutions(resolved, by_record)

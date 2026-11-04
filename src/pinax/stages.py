@@ -50,6 +50,8 @@ from pinax.plans.corrections import load_corrections
 from pinax.plans.model import ChangePlan
 from pinax.plans.staging import stage
 from pinax.plans.worklist import render_worklist
+from pinax.records.matching import RecordMatcher
+from pinax.records.works import group_records
 from pinax.sources.inventory import Inventory, build_inventory
 from pinax.sources.pdf import PdfReader
 from pinax.workspace import Workspace
@@ -111,19 +113,39 @@ def compare_keys(config: Config, client: ZoteroClient, label: str) -> dict[str, 
 
 
 def make_inventory(config: Config, reader: PdfReader) -> Counter[str]:
-    """Inventory the sources; returns the counts of files, contents and contents with a DOI."""
+    """
+    Inventory the sources.
+
+    Returns
+    -------
+    Counter[str]
+        Counts of files, contents, contents with a DOI, records, record works, and record works
+        whose records disagree.
+    """
     folders = [target.folder for target in config.targets]
     inventory = build_inventory(config.sources, folders, reader)
     write_json(_workspace(config).inventory, inventory.to_json())
+    works = group_records(inventory.records)
     return Counter(
         files=len(inventory.files),
         contents=len(inventory.contents),
         with_doi=sum(1 for content in inventory if content.doi),
+        records=len(inventory.records),
+        record_works=len(works),
+        disagreeing_works=sum(1 for work in works if work.disagreements),
     )
 
 
 def match(config: Config, label: str) -> Counter[str]:
-    """Match every content with a snapshot; returns the count of each status and method."""
+    """
+    Match every content and every record work with a snapshot.
+
+    Returns
+    -------
+    Counter[str]
+        Count of each status and method, such as `matched:doi`; the counts of the record works
+        carry the prefix `records `.
+    """
     workspace = _workspace(config)
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
     inventory = _inventory(workspace)
@@ -131,8 +153,17 @@ def match(config: Config, label: str) -> Counter[str]:
     resolutions = load_resolutions(config.resolutions, inventory)
     matcher = Matcher.build(library, stored, config.matching, config.sources.names, resolutions)
     matches = matcher.match_all(inventory)
-    write_json(workspace.matches, matches_to_json(matches, label))
-    return Counter(f"{m.status.value}:{m.method.value if m.method else NO_METHOD}" for m in matches)
+    records = RecordMatcher(library, config.matching, resolutions).match_all(
+        group_records(inventory.records)
+    )
+    write_json(workspace.matches, matches_to_json(matches, label, records))
+    counts = Counter(
+        f"{m.status.value}:{m.method.value if m.method else NO_METHOD}" for m in matches
+    )
+    counts.update(
+        f"records {m.status.value}:{m.method.value if m.method else NO_METHOD}" for m in records
+    )
+    return counts
 
 
 def make_plan(config: Config, label: str) -> ChangePlan:

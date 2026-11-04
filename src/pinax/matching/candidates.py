@@ -21,7 +21,7 @@ from pinax.library.model import Item, Library
 from pinax.matching.model import Candidate, Method
 from pinax.names import NameTemplate, parse_name
 from pinax.sources.inventory import Content
-from pinax.text import content_words
+from pinax.text import content_words, names_agree
 
 
 class CandidateSource(Protocol):
@@ -100,21 +100,6 @@ class DoiSource:
         return Candidate(keys[0], self.method) if len(keys) == 1 else None
 
 
-def _agrees(surname: str, token: str, prefix: int) -> bool:
-    """
-    Whether a surname and a file-name token are equal, or one prefixes the other.
-
-    Both words must hold at least `prefix` characters to match by prefix: a garbled surname such
-    as `quellmarkn` then still matches `quellmark`, while short words such as `li` and `lin` stay
-    distinct.
-    """
-    if surname == token:
-        return True
-    if min(len(surname), len(token)) < prefix:
-        return False
-    return surname.startswith(token) or token.startswith(surname)
-
-
 class NameSource:
     """
     Item whose first author, year and title words agree with the file name.
@@ -157,7 +142,9 @@ class NameSource:
             word for name in item.surnames for word in content_words(name, config.stop_words)
         }
         prefix = config.surname_prefix
-        if not any(_agrees(surname, token, prefix) for surname in surnames for token in authors):
+        if not any(
+            names_agree(surname, token, prefix) for surname in surnames for token in authors
+        ):
             return None
         title = content_words(item.title, config.stop_words)
         overlap = len(title & tokens) / max(1, min(len(title), len(tokens - surnames)))

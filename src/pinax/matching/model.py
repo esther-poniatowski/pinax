@@ -13,13 +13,17 @@ Candidate
     Item proposed for a content by one route.
 Match
     Outcome of the matching of one content.
+RecordMatch
+    Outcome of the matching of one work described by records.
 
 Functions
 ---------
-matches_to_json(matches, snapshot) -> dict[str, Any]
+matches_to_json(matches, snapshot, records) -> dict[str, Any]
     Serializable form of the matches of an inventory.
 matches_from_json(data) -> list[Match]
-    Rebuild the matches from their serialized form.
+    Rebuild the matches of the contents from their serialized form.
+record_matches_from_json(data) -> list[RecordMatch]
+    Rebuild the matches of the record works from their serialized form.
 """
 
 from dataclasses import dataclass
@@ -30,12 +34,13 @@ from pinax.errors import ArtifactError
 
 
 class Method(StrEnum):
-    """Route that proposed the item of a match."""
+    """Route that proposed the item of a match; `TITLE` matches a record by its title and year."""
 
     SAME_FILE = "same-file"
     DOI = "doi"
     NAME = "name"
     REVERSE = "reverse"
+    TITLE = "title"
     RESOLUTION = "resolution"
 
 
@@ -146,29 +151,86 @@ class Match:
         )
 
 
-MATCHES_FORMAT = "pinax-matches/1"
+@dataclass(frozen=True)
+class RecordMatch:
+    """
+    Outcome of the matching of one work described by records.
+
+    Attributes
+    ----------
+    identity : str
+        Identity of the work.
+    refs : tuple[str, ...]
+        References of its records, as `refs.bib#3`.
+    status : Status
+        Outcome.
+    item : str
+        Item key, empty for an absent work.
+    method : Method | None
+        Route of the item.
+    note : str
+        Explanation, such as the disagreements of the records or the candidates left to check.
+    """
+
+    identity: str
+    refs: tuple[str, ...]
+    status: Status
+    item: str = ""
+    method: Method | None = None
+    note: str = ""
+
+    def to_json(self) -> dict[str, Any]:
+        """Serializable form of the match."""
+        return {
+            "identity": self.identity,
+            "refs": list(self.refs),
+            "status": self.status.value,
+            "item": self.item,
+            "method": self.method.value if self.method else None,
+            "note": self.note,
+        }
+
+    @classmethod
+    def from_json(cls, data: dict[str, Any]) -> "RecordMatch":
+        """Rebuild a match from its serialized form."""
+        return cls(
+            identity=data["identity"],
+            refs=tuple(data["refs"]),
+            status=Status(data["status"]),
+            item=data.get("item") or "",
+            method=Method(data["method"]) if data.get("method") else None,
+            note=data.get("note") or "",
+        )
 
 
-def matches_to_json(matches: list[Match], snapshot: str) -> dict[str, Any]:
+MATCHES_FORMAT = "pinax-matches/2"
+
+
+def matches_to_json(
+    matches: list[Match], snapshot: str, records: list[RecordMatch] | None = None
+) -> dict[str, Any]:
     """
     Serializable form of the matches of an inventory.
 
     Parameters
     ----------
     matches : list[Match]
-        Matches in inventory order.
+        Matches of the contents, in inventory order.
     snapshot : str
         Label of the library snapshot matched against.
+    records : list[RecordMatch] | None
+        Matches of the record works, in inventory order.
 
     Returns
     -------
     dict[str, Any]
-        Document with the format tag, the snapshot label and the matches.
+        Document with the format tag, the snapshot label, and both lists of matches.
     """
     return {
         "format": MATCHES_FORMAT,
         "snapshot": snapshot,
         "matches": [match.to_json() for match in matches],
+        "records": [match.to_json() for match in records or []],
     }
 
 
@@ -184,13 +246,41 @@ def matches_from_json(data: Any) -> list[Match]:
     Returns
     -------
     list[Match]
-        Matches in inventory order.
+        Matches of the contents, in inventory order.
 
     Raises
     ------
     ArtifactError
         If the format tag does not match.
     """
+    _require_format(data)
+    return [Match.from_json(entry) for entry in data["matches"]]
+
+
+def record_matches_from_json(data: Any) -> list[RecordMatch]:
+    """
+    Rebuild the matches of the record works from their serialized form.
+
+    Parameters
+    ----------
+    data : Any
+        Value written by `matches_to_json`.
+
+    Returns
+    -------
+    list[RecordMatch]
+        Matches of the record works, in inventory order.
+
+    Raises
+    ------
+    ArtifactError
+        If the format tag does not match.
+    """
+    _require_format(data)
+    return [RecordMatch.from_json(entry) for entry in data.get("records", [])]
+
+
+def _require_format(data: Any) -> None:
+    """Fail unless the data carries the format tag of the matches."""
     if not isinstance(data, dict) or data.get("format") != MATCHES_FORMAT:
         raise ArtifactError(f"not a list of matches of format {MATCHES_FORMAT}")
-    return [Match.from_json(entry) for entry in data["matches"]]

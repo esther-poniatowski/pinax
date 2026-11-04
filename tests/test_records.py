@@ -1,13 +1,17 @@
 """Tests of the readers of record exports, the grouping of records into works, and the inventory."""
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
-from conftest import SourceTree, pdf_bytes
-from pinax.errors import ArtifactError
+from conftest import SourceTree, api_item, library, matching_config, pdf_bytes
+from pinax.errors import ArtifactError, ConfigError
+from pinax.matching.model import Method, RecordMatch, Status
+from pinax.matching.resolutions import Resolutions, load_resolutions
 from pinax.records.items import connector_item
-from pinax.records.model import Record
+from pinax.records.matching import RecordMatcher
+from pinax.records.model import Record, RecordCreator
 from pinax.records.readers import reader
 from pinax.records.works import group_records
 from pinax.sources.inventory import Inventory
@@ -178,3 +182,120 @@ def test_inventory_reads_exports_as_records_not_as_files(sources: SourceTree) ->
     assert {r.folder for r in inventory.records} == {"a"}
     restored = Inventory.from_json(inventory.to_json())
     assert restored.records == inventory.records
+
+
+def _matches(
+    records: list[Record],
+    items: list[dict[str, object]],
+    resolutions: str | None = None,
+    directory: Path | None = None,
+) -> dict[str, RecordMatch]:
+    inventory = Inventory(Path("/synthetic"), [], {}, records)
+    loaded = Resolutions()
+    if resolutions is not None:
+        assert directory is not None
+        path = directory / "resolutions.yml"
+        path.write_text(resolutions, encoding="utf-8")
+        loaded = load_resolutions(path, inventory)
+    matcher = RecordMatcher(library(items), matching_config(), loaded)
+    return {match.refs[0]: match for match in matcher.match_all(group_records(records))}
+
+
+def _record(position: int, title: str, **values: Any) -> Record:
+    creators = tuple(RecordCreator(name) for name in values.pop("authors", ("Doe",)))
+    return Record(
+        "refs.bib",
+        position,
+        values.pop("key", "doe2001"),
+        "journalArticle",
+        title,
+        creators,
+        **values
+    )
+
+
+def test_records_match_by_doi_confirmed_by_title_and_by_title_without_doi() -> None:
+    records = [
+        _record(1, "A Model of Synthetic Signals", date="2001", doi="10.5555/one"),
+        _record(2, "Another Synthetic Work", date="2002", doi="10.5555/two"),
+        _record(3, "THE CASE OF A SYNTHETIC TITLE", date="2003"),
+        _record(4, "A Synthetic Title Twice", date="2004"),
+        _record(5, "A Synthetic Work Out of Range", date="1990"),
+        _record(6, "Nothing Like It", date="2006"),
+    ]
+    items = [
+        api_item(
+            "ITEM0001",
+            title="A model of synthetic signals",
+            DOI="10.5555/one",
+            date="2001",
+            creators=["Doe"],
+        ),
+        api_item("ITEM0002", title="A different title", DOI="10.5555/two", creators=["Doe"]),
+        api_item("ITEM0003", title="The case of a synthetic title", date="2003", creators=["Doe"]),
+        api_item("ITEM0004", title="A synthetic title twice", date="2004", creators=["Doe"]),
+        api_item("ITEM0005", title="A synthetic title twice", date="2004", creators=["Doe"]),
+        api_item("ITEM0006", title="A synthetic work out of range", date="2010", creators=["Doe"]),
+    ]
+    found = _matches(records, items)
+    outcome = {ref: (m.status, m.item, m.method) for ref, m in found.items()}
+    assert outcome["refs.bib#1"] == (Status.MATCHED, "ITEM0001", Method.DOI)
+    assert outcome["refs.bib#2"] == (Status.CHECK, "ITEM0002", Method.DOI)
+    assert outcome["refs.bib#3"] == (Status.MATCHED, "ITEM0003", Method.TITLE)
+    assert outcome["refs.bib#4"][0] is Status.CHECK
+    assert outcome["refs.bib#5"] == (Status.CHECK, "ITEM0006", Method.TITLE)
+    assert outcome["refs.bib#6"] == (Status.ABSENT, "", None)
+    assert "another title" in found["refs.bib#2"].note
+
+
+def test_repeated_keys_match_two_items() -> None:
+    records = [
+        _record(1, "A Synthetic Preprint", date="2001", doi="10.5555/pre"),
+        _record(2, "A Synthetic Abstract", date="2001", doi="10.5555/abs"),
+    ]
+    items = [
+        api_item("ITEMPRE1", title="A synthetic preprint", DOI="10.5555/pre"),
+        api_item("ITEMABS1", title="A synthetic abstract", DOI="10.5555/abs"),
+    ]
+    found = _matches(records, items)
+    assert [found[ref].item for ref in ("refs.bib#1", "refs.bib#2")] == ["ITEMPRE1", "ITEMABS1"]
+
+
+def test_disagreeing_records_wait_for_a_resolution(tmp_path: Path) -> None:
+    records = [
+        _record(1, "A Synthetic Work", date="2001", doi="10.5555/w"),
+        Record(
+            "refs.ris", 1, "", "journalArticle", "A Synthetic Work", date="2004", doi="10.5555/w"
+        ),
+    ]
+    found = _matches(records, [])
+    assert found["refs.bib#1"].status is Status.CHECK
+    assert "years differ: 2001, 2004" in found["refs.bib#1"].note
+    resolved = _matches(
+        records, [], "resolutions:\n  - {record: doi:10.5555/W, action: reject}\n", tmp_path
+    )
+    assert resolved["refs.bib#1"].status is Status.ABSENT
+
+
+def test_record_resolutions_name_a_record_or_a_work(tmp_path: Path) -> None:
+    records = [_record(1, "A Synthetic Work", date="2001"), _record(2, "Other", date="2002")]
+    items = [api_item("ITEM0001", title="Unrelated"), api_item("ITEM0002", title="Other")]
+    text = (
+        "resolutions:\n"
+        "  - {record: 'refs.bib#1', action: assign, item: ITEM0001}\n"
+        "  - {record: 'title:other|2002', action: reject, item: ITEM0002}\n"
+    )
+    found = _matches(records, items, text, tmp_path)
+    assert (found["refs.bib#1"].status, found["refs.bib#1"].method) == (
+        Status.MATCHED,
+        Method.RESOLUTION,
+    )
+    assert found["refs.bib#2"].status is Status.ABSENT
+    with pytest.raises(ConfigError, match="names no record"):
+        _matches(
+            records, items, "resolutions:\n  - {record: 'refs.bib#9', action: accept}\n", tmp_path
+        )
+    with pytest.raises(ConfigError, match="exactly one `file` or `record`"):
+        _matches(
+            records, items, "resolutions:\n  - {file: a.pdf, record: x, action: accept}\n", tmp_path
+        )
