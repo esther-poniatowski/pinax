@@ -83,9 +83,9 @@ def api_item(  # pylint: disable=too-many-arguments
 
 def pdf_attachment(key: str, parent: str | None, filename: str, **fields: str) -> dict[str, Any]:
     """Entry of a PDF attachment."""
-    return api_item(
-        key, "attachment", parent=parent, filename=filename, contentType="application/pdf", **fields
-    )
+    entry = api_item(key, "attachment", parent=parent)
+    entry["data"].update({"filename": filename, "contentType": "application/pdf", **fields})
+    return entry
 
 
 def api_collection(key: str, name: str, parent: str | None = None) -> dict[str, Any]:

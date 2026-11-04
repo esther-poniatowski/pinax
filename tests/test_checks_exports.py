@@ -1,5 +1,6 @@
 """Tests of the checks of a plan after the change, and of the evidence file and reference lists."""
 
+from collections.abc import Sequence
 from pathlib import Path
 
 import yaml
@@ -15,7 +16,7 @@ from conftest import (
     pdf_attachment,
     pdf_bytes,
 )
-from pinax.checks.model import Outcome
+from pinax.checks.model import CheckResult, Outcome
 from pinax.checks.operations import PlanChecker, check_log
 from pinax.exports.evidence import EvidenceBuilder, Route, render_evidence
 from pinax.exports.references import render_references, shared_keys
@@ -59,12 +60,8 @@ def _checker(lib: Library, storage: Storage, reader: FakeReader) -> PlanChecker:
     return PlanChecker(lib, StorageIndex(storage.root), reader, TitleConfirmer(8, 0.5), pages=2)
 
 
-def _results(report_results: list[object], target: str) -> list[tuple[str, str]]:
-    return [
-        (r.outcome.value, r.detail)  # type: ignore[attr-defined]
-        for r in report_results
-        if r.target == target  # type: ignore[attr-defined]
-    ]
+def _results(report_results: Sequence[CheckResult], target: str) -> list[tuple[str, str]]:
+    return [(r.outcome.value, r.detail) for r in report_results if r.target == target]
 
 
 def test_checks_of_imports(tmp_path: Path, storage: Storage) -> None:
