@@ -30,7 +30,7 @@ The present record fixes, for each of these points, the key that declares it and
 
 **Targets per folder.** Each target assigns a folder of the sources to a destination collection and to a scope. A collection is named by its key or by its path. The plan builder resolves each path against the snapshot, and stops when a path names no collection or several. A file belongs to the target of the deepest folder that contains it. Every filing and every import of the plan records its destination. A drop targets one collection, so the staging folder holds one sub-folder per destination. ^targets
 
-**Evidence as YAML.** The evidence file holds one flow mapping per file, so that a change of one file changes one line. An unresolved file carries null for its item and its citation key. ^evidence-yaml
+**Evidence as YAML.** The evidence file holds one flow mapping per source, file or record, so that a change of one source changes one line. An unresolved source carries null for its item and its citation key. ^evidence-yaml
 
 ## Options rejected
 

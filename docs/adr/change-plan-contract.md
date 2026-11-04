@@ -23,7 +23,7 @@ The present record fixes the access to the library, the identity of a file, the 
 
 ## Decision
 
-**Read-only access on the loopback interface.** Pinax reads the library through the local API of the desktop application, with GET requests only, and refuses a base URL outside the loopback interface. Pinax reads stored files from the storage directory, and never opens the database file. Two POST requests remain, the connector ping and the Better BibTeX method `item.citationkey`, and neither changes the state of the library. ^read-only
+**Read-only access on the loopback interface.** Pinax reads the library through the local API of the desktop application, with GET requests only, and refuses a base URL outside the loopback interface. Pinax reads stored files from the storage directory, and never opens the database file. Two POST requests remain, the connector ping and the Better BibTeX method `item.citationkey`, and neither changes the state of the library. The command `pinax create` is the only exception: it creates items through the connector, as the [decision on bibliographic records](bibliographic-records.md#^connector-creation) records. ^read-only
 
 **Identity by content.** A source file is identified by its SHA-256. An attachment is mapped to a file by the MD5 that Zotero records, or else by hashing the stored files whose size equals the size of the file. A file name never identifies a file. Every item key resolves through the `dc:replaces` chains of the library, trashed items included. Therefore, a key recorded before a merge reaches the surviving item. ^content-identity
 
@@ -50,7 +50,7 @@ Each option below would serve the goal of the record, and one constraint exclude
 | --- | --- |
 | reading the database file | Pinax reads while the application runs, and a database read concurrent with the application can return inconsistent results |
 | writing through the Zotero web API | the web API requires credentials, and no approved workflow introduces them |
-| writing through the connector `saveItems` | the route ignores its target, and can neither attach a file to an existing item nor file an existing item |
+| attaching and filing through the connector `saveItems` | the route ignores its target, and can neither attach a file to an existing item nor file an existing item |
 | applying the plan by hand from the worklist only | a manual batch leaves no log, and repeats a step without testing whether the step was already done |
 | confirming a match by the share of title words found | a short title of a few common words passes against unrelated pages |
 | matching by DOI alone | the DOI on a first page often belongs to a cited article |

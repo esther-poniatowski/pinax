@@ -53,7 +53,7 @@ The table below states the effect of each other key of the defaults file:
 A target assigns a folder of the sources to the collection that receives its items. Each target holds two required keys and one optional key:
 
 - `folder`: a folder relative to the root, or `.` for the root itself. An absolute path must lie under the root;
-- `destination`: the collection that receives the filed and imported items of the folder;
+- `destination`: the collection that receives the filed, imported and created items of the folder;
 - `scope`: optional, the collection whose sub-tree counts as filed: an item in the scope or in one of its descendants receives no filing. Without a scope, the destination is the scope.
 
 Each folder is named by one target only, and a folder cannot climb above the root.
@@ -82,6 +82,30 @@ The literal text between two placeholders separates them. Thus, the template `{y
 
 The default templates are `{year}_{title}` and `{title}`, and the template `{title}` matches any name. A list of templates in the configuration file replaces the default list. When no template of the list matches a name, the match by name skips its file, and the other routes of the matching still apply.
 
+## Record exports
+
+An export of bibliographic records is read as a list of records, not as a reference file. The key `sources.records` lists the patterns of the names of such exports, each with the format of its files. The first pattern matched by a file name, ignoring case, decides the format. Four formats are known:
+
+| Format | Files |
+| --- | --- |
+| `bibtex` | BibTeX entries, read by a parser of nested braces; a parsing error stops the inventory |
+| `ris` | RIS records of tagged lines, each closed by the tag `ER`; an unclosed record, or a line outside any record, stops the inventory |
+| `zotero-csv` | the CSV export of Zotero, with the required columns `Item Type` and `Title`; a missing column stops the inventory |
+| `doi-list` | one DOI per line; a blank line and a line opening with `#` are skipped, and a line without a DOI stops the inventory |
+
+The default patterns read the files `*.bib` as BibTeX and the files `*.ris` as RIS. A list in the configuration file replaces the default list. Therefore, the example below repeats the default patterns before adding the CSV export and a list of DOIs:
+
+```yaml
+sources:
+  records:
+    - {pattern: "*.bib", format: bibtex}
+    - {pattern: "*.ris", format: ris}
+    - {pattern: "*.csv", format: zotero-csv}
+    - {pattern: "*-dois.txt", format: doi-list}
+```
+
+A record belongs to the target of the folder of its export. A record described by a DOI only can be matched, but it cannot be created, since a creation needs metadata.
+
 ## Matching thresholds
 
 The section `matching` sets the thresholds of the matching and the stop words of the match by name:
@@ -91,10 +115,10 @@ The section `matching` sets the thresholds of the matching and the stop words of
 | `title_words` | opening title words that must appear in sequence to confirm a candidate |
 | `reject_below` | share of title words found in the pages below which a candidate is rejected |
 | `name_threshold` | lowest overlap of a file name with an item title for the match by name to propose a candidate |
-| `year_tolerance` | largest difference between the year of a file name and the year of an item |
+| `year_tolerance` | largest difference between the year of a file name or of a record and the year of an item |
 | `opening_words` | window, in words from the start of the first page, in which the reverse search accepts a title |
 | `reverse_min_words` | shortest title, in words, that the reverse search looks for |
-| `surname_prefix` | length, in characters, of the shortest surname or file-name word compared by prefix, so that a garbled surname still matches; shorter words must be equal |
+| `surname_prefix` | length, in characters, of the shortest surname or file-name word compared by prefix, so that a garbled surname still matches; shorter words must be equal; the match by name and the title route of records use it |
 | `undated_penalty` | score removed from a match by name when the year of the name or of the item is unknown |
 | `stop_words` | words ignored by the match by name in titles and surnames, such as articles |
 
@@ -102,7 +126,7 @@ Every stage compares words after one normalization: accents and case are folded,
 
 ## Resolutions file
 
-A resolution records a decision on one content, taken by reading its first page. The match command applies it on every run. The file holds a list under the key `resolutions`:
+A resolution records a decision on one content, taken by reading its first page, or on one record work. The match command applies it on every run. The file holds a list under the key `resolutions`, and each entry holds either the key `file` or the key `record`:
 
 ```yaml
 resolutions:
@@ -110,18 +134,23 @@ resolutions:
     action: reject
     item: ABCD2345
     note: the DOI on page 1 belongs to a cited article
+  - record: exports/references.bib#3   # export file and position, or `doi:` or `title:` identity
+    action: assign
+    item: EFGH6789
 ```
+
+The identity of a record work appears in the list `records` of the workspace file `matches.json`. A `title:` identity holds the normalized title, made of the words of three letters or more folded in capitals and accents, and the year. For example, the title Shape of Signals of 2001 has the identity `title:shape signals|2001`.
 
 A file name must designate one content only; otherwise, the entry gives the path relative to the root. The four actions are:
 
 | Action | Effect | Item |
 | --- | --- | --- |
 | `accept` | confirms the candidate left to check | none |
-| `reject` | removes the given item from every route, or, without an item, leaves the content absent | optional |
+| `reject` | removes the given item from every route, or, without an item, leaves the content or the record work absent; the plan then creates an absent record work | optional |
 | `assign` | matches the content to the given item | required |
 | `preprint-of` | records that the given item holds another version of the work; the item is filed, but receives no attachment | required |
 
-The match command stops when a resolution names an item absent from the snapshot, or accepts a content that no route matches.
+The match command stops when a resolution names an item absent from the snapshot, or accepts a content or a record work that no route matches.
 
 ## Corrections file
 

@@ -5,7 +5,7 @@ aliases:
 ---
 # Reconciling a folder
 
-A reconciliation maps each file of a folder of references to the Zotero item that holds its work. Where an item lacks its file, or lies outside the collection of its folder, the reconciliation changes the library through a verified plan. Finally, the reconciliation exports the citation keys of each folder. Each stage below is one command of Pinax, and the commands exchange their artifacts through the workspace.
+A reconciliation maps each file and each record of a folder of references to the Zotero item that holds its work. Where an item lacks its file, or lies outside the collection of its folder, the reconciliation changes the library through a verified plan. Finally, the reconciliation exports the citation keys of each folder. Each stage below is one command of Pinax, and the commands exchange their artifacts through the workspace.
 
 *Prerequisites.* The guide assumes three conditions:
 
@@ -54,6 +54,8 @@ pinax inventory --config pinax.yml
 
 Files with identical bytes form one *content*. Matching works on contents, and the exports return to files.
 
+An export of bibliographic records, such as a BibTeX file, is not a reference file of its own. The record exports of the [configuration](configuration.md) name the patterns of such files and their formats. The inventory reads each matching file as a list of *records*. Each record is identified by its export file and its position, since two records of one export can share a key. Records sharing an identity, their DOI or else their title and year, form one *record work*. The command prints the number of record works whose records disagree on their title or their year.
+
 ## Matching each content
 
 The matching decides which item holds the work of each content. The match command tries three routes in order for each content, and stops at the first route that yields a candidate item:
@@ -79,11 +81,13 @@ The command prints the number of contents in each pair of status and route, such
 - `absent`: no item holds the work;
 - `preprint-of`: the item holds another version of the work, by manual resolution.
 
-The workspace file `matches.json` records the item, the route and the verdict of each content. The file also records the share of title words found in the pages, and a note naming the rejected candidates and the cited items.
+The workspace file `matches.json` records the item, the route and the verdict of each content. The file also records the share of title words found in the pages, and a note naming the rejected candidates and the cited items. Its list `records` holds the identity, the records, the item and the route of each record work.
+
+The match command also matches each record work. When exactly one live item records the DOI of the work, the work is matched to it if the titles are equal, and left to check otherwise. When no live item records the DOI, the work is matched by its title, with capitals and accents folded. The year and the first author refute a candidate when both the record and the item state them. The counts of the record works carry the prefix `records`, such as `records matched:doi 12`. A record work is left to check when its records disagree, when its candidate fails one of the tests, or when several items qualify.
 
 ## Resolving the remaining matches
 
-A content left to check needs a decision taken by reading its first page. The resolutions file records each decision once, and every later run of the match command applies it. The example below accepts a candidate left to check, and rejects a candidate proposed for another file:
+A content left to check needs a decision taken by reading its first page. The resolutions file records each decision once, and every later run of the match command applies it. The example below accepts a candidate left to check, rejects a candidate proposed for another file, and assigns a record work to an item:
 
 ```yaml
 resolutions:
@@ -93,9 +97,12 @@ resolutions:
     action: reject
     item: ABCD2345
     note: the DOI on page 1 is the DOI of a cited article
+  - record: exports/references.bib#3
+    action: assign
+    item: EFGH6789
 ```
 
-The [configuration reference](configuration.md) lists the four actions of a resolution. After an edit of the resolutions file, the match command runs again.
+A resolution of a record work names one of its records, by its export file and its position, or the work itself, by its identity. The [configuration reference](configuration.md) lists the four actions of a resolution. After an edit of the resolutions file, the match command runs again.
 
 ## Building the plan
 
@@ -105,13 +112,14 @@ The plan decides every change of the library before any write. The plan command 
 pinax plan --config pinax.yml
 ```
 
-The command refuses to plan while a content is still left to check. The plan holds five lists:
+The command refuses to plan while a content or a record work is still left to check. The plan holds six lists:
 
-- **imports**: each work absent from the library, imported from its largest PDF into the destination of the folder of that PDF. Contents sharing a DOI form one work. The next plan files the imported item into the other destinations of the files of the work;
+- **creations**: each record work absent from the library, created from its record with the most fields, into the destination of the folder of its export. An absent PDF holds the work of a creation when its pages confirm the record's title, or when it carries the record's DOI and its pages do not reject that title. The plan does not import such a PDF, and the next plan attaches it to the created item;
+- **imports**: each other work absent from the library, imported from its largest PDF into the destination of the folder of that PDF. Contents sharing a DOI form one work. The next plan files the imported item into the other destinations of the files of the work;
 - **attachments**: each matched item without a PDF receives the largest matched file;
-- **filings**: each matched or preprint item is added to the destination of every folder holding one of its files. An item already in the scope of a destination is not added to it, and every item stays in its current collections;
+- **filings**: each matched or preprint item is added to the destination of every folder holding one of its files or the export of one of its records. An item already in the scope of a destination is not added to it, and every item stays in its current collections;
 - **corrections**: the record changes declared in the corrections file;
-- **skipped**: the works without a PDF file, with the reason.
+- **skipped**: the works without a PDF file and the record works described by a DOI only, with the reason.
 
 The plan never creates a collection. The command stops when a collection of a target is missing from the snapshot, and the researcher then creates the collection in Zotero. The command also stops in four other cases:
 
@@ -121,6 +129,29 @@ The plan never creates a collection. The command stops when a collection of a ta
 - a change of the targets leaves a folder of the inventory without a target; the researcher then runs the inventory again.
 
 The command also writes the worklist `worklist.md`. The worklist tables every operation and orders the manual steps of the next stage.
+
+## Creating items from records
+
+The connector of the Zotero application creates an item from its metadata, so the creations go through the connector rather than through a drop. The researcher reviews the plan and its worklist first. Then, the creation command creates the items of the plan in order, one item per session:
+
+```sh
+pinax create --config pinax.yml --limit 1
+```
+
+The connector ignores the target collection of a creation, so each item is retargeted to its destination in the same session. Before its first write, the command probes the connector, and checks the collections listed by the connector against a snapshot, `current` unless the option `--snapshot` names another. When the collections differ, or the probe answers unexpectedly, the command stops before any write with status 2, and the researcher takes a new snapshot. Before each write, the command searches the library for the identity of the work. After each write, the command reads the item back and verifies its identity, its title, its destination and its uniqueness. The option `--limit` bounds the number of items created. A first run with `--limit 1` creates one item. The researcher reads that item in Zotero, then runs the command without the option. The command prints one outcome per creation:
+
+- `created`: the item was created and verified;
+- `exists`: an item already holds the work, so the command sends no request to the endpoint `saveItems`;
+- `failed`: a verification of the created item failed, or the destination of the item has no unique connector target;
+- `ambiguous`: a request of the connector had no clear answer.
+
+The command stops at the first `failed` or `ambiguous` outcome, and exits with status 1. A second run creates no duplicate of an item created and verified, since the search before each write finds it. The command writes its log to the file `creation-log.json` after each item. The log holds the versions reported by the connector, and the outcome of each creation.
+
+After a `failed` or `ambiguous` outcome, a second run could miss the item of the first run, for example an item saved under another title. Therefore, the command refuses to run again until the researcher takes a new snapshot, runs the checks, and repairs the item in Zotero. The option `--reconciled` states that these three steps are done:
+
+```sh
+pinax create --config pinax.yml --reconciled
+```
 
 ## Applying the plan in Zotero
 
@@ -160,17 +191,17 @@ The command prints each check that did not pass, then a summary, and exits with 
 
 - `fail`: the operation does not hold, for example in four typical cases:
   - a failed metadata retrieval left an attachment without a parent item;
-  - an item lies outside its destination;
+  - an item lies outside its destination, or an item created from a record is missing, duplicated, or carries another title;
   - the title of an item does not open its PDF;
   - an imported item duplicates an existing item;
-- `note`: the operation holds with a fact to read. Examples are a record without a date or a venue, an item that held another PDF, and an imported item due for filing into another destination by the next plan;
+- `note`: the operation holds with a fact to read. Examples are a record without a date or a venue, an item that held another PDF, and an imported or created item due for filing or for its PDF by the next plan;
 - `pass`: the operation holds.
 
 A failure is repaired in Zotero, by a merge or a manual edit, or through the corrections file and a new plan. A new plan replaces the file `plan.json`, so a copy of the applied plan is kept first, since the exports read it. Then, the checks run again on a new snapshot. The full report is saved as the file `check-report.json`.
 
 ## Exporting the references
 
-The exports map every file to the item that holds it, once the library is settled. The match command runs again against the settled snapshot. The export command reads the applied plans to recognize the imported files, and its option `--plan` is repeated once per applied plan:
+The exports map every file and every record to the item that holds it, once the library is settled. The match command runs again against the settled snapshot. The export command reads the applied plans to recognize the imported files and the created records, and its option `--plan` is repeated once per applied plan:
 
 ```sh
 pinax match --config pinax.yml --snapshot after
@@ -179,13 +210,14 @@ pinax export --config pinax.yml --snapshot after --plan .pinax/plan.json
 
 The command writes two files to the workspace:
 
-- the evidence file `evidence.yml` lists one entry per file under the key `sources`: its SHA-256, folder, file name, route, item key and citation key. An unresolved file has null for its item key and its citation key, and a comment block at the top of the file names the fields;
-- the reference list `references.yml` lists the citation keys of each folder, and the files left unresolved.
+- the evidence file `evidence.yml` lists one entry per file under the key `files`, and one entry per record under the key `records`. A file entry holds its SHA-256, folder and file name; a record entry holds its export file, position, key and DOI. Each entry also holds its route, item key and citation key. An unresolved source has the route `unresolved`, and null for its item key and its citation key. A comment block at the top of the file names the fields;
+- the reference list `references.yml` lists the citation keys of each folder, from its files and its records, and the sources left unresolved.
 
-The route of a file takes one of four values:
+The route of a source takes one of five values:
 
 - `imported`: the file belongs to a work imported by one of the given plans;
-- `matched` or `preprint-of`: the match of the file decides its item;
-- `unresolved`: no live item with a citation key holds the file.
+- `created`: the record belongs to a work created by one of the given plans;
+- `matched` or `preprint-of`: the match of the source decides its item;
+- `unresolved`: no live item with a citation key holds the source.
 
 The option `--header` names a file whose comment block replaces the default header of `references.yml`. In addition, the command prints each citation key carried by several of the exported items. A reference list that cites such a key is ambiguous.

@@ -10,14 +10,15 @@ Reconciles a folder of reference files with a Zotero library and applies verifie
 
 ## Overview
 
-A literature review leaves folders of PDF files. The work of each file may already lie in a Zotero library, possibly under another file name, without its PDF, or outside the collection of its folder. Pinax maps each file of such a folder to the Zotero item that holds its work, and decides the changes that the library needs. One change plan records these changes:
+A literature review leaves folders of PDF files and exports of bibliographic records. The work of each file or record may already lie in a Zotero library, possibly under another file name, without its PDF, or outside the collection of its folder. Pinax maps each file and each record of such a folder to the Zotero item that holds its work, and decides the changes needed by the library. One change plan records these changes:
 
-- the works to import;
+- the works to import from their PDF;
+- the works to create from their record;
 - the PDFs to attach to existing items;
 - the existing items to add to the collection of their folder;
 - the item records to correct.
 
-From the plan, Pinax generates a script for the researcher to run inside Zotero. After the change, Pinax verifies the library against the same plan. Finally, Pinax exports the citation keys of the items that hold the files of each folder.
+From the plan, Pinax creates, through the Zotero connector, each missing item that a record describes, and generates a script for the researcher to run inside Zotero. After the change, Pinax verifies the library against the same plan. Finally, Pinax exports the citation keys of the items that hold the files and records of each folder.
 
 ### Motivation
 
@@ -31,17 +32,17 @@ Pinax addresses each failure in turn. First, Pinax identifies every file by its 
 
 ### Safety
 
-Pinax only reads the library. Every change goes through the generated script, run by the researcher inside Zotero, as the [decision on the change plan](docs/adr/change-plan-contract.md) records.
+Pinax reads the library, with one exception. The creation command creates the items planned from records, through the Zotero connector, one item per session, and verifies each item before the next. The researcher reviews the plan and its worklist before running the command. Every other change goes through a drop of the staged files or the generated script, both run by the researcher inside Zotero. The [decision on the change plan](docs/adr/change-plan-contract.md) and the [decision on bibliographic records](docs/adr/bibliographic-records.md) record both routes.
 
 ### Status
 
-Pre-alpha. The stages from the inventory to the exports are implemented and tested on synthetic libraries.
+Pre-alpha. The stages from the inventory to the exports are implemented and tested on synthetic libraries. The reading stages have reproduced two real reconciliations, one of files and one of records. The creation through the connector has been tested against a fake of the Zotero application only.
 
 ---
 
 ## Quick start
 
-A first run on a folder needs a configuration file and the Zotero application running. The configuration file below declares the folder of references and the collection that receives its filed and imported items:
+A first run on a folder needs a configuration file and the Zotero application running. The configuration file below declares the folder of references and the collection that receives its filed, imported and created items:
 
 ```yaml
 sources:
