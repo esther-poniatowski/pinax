@@ -63,17 +63,40 @@ def render_worklist(plan: ChangePlan, staging: Path) -> str:
         f"{_cell(subfolder(dest))} |"
         for dest in plan.destinations
     ]
+    steps = ["Review the tables below and the generated script."]
+    if plan.creations:
+        steps.append(
+            "Create the missing records with `pinax create --limit 1`, read the created item, then "
+            "run `pinax create` for the others."
+        )
+    if plan.imports:
+        steps.append(
+            f"Open the staging folder with `open {shlex.quote(str(staging))}`. For each sub-folder, "
+            "select its collection in Zotero, then drag the files of the sub-folder, not the "
+            "folder, into the collection."
+        )
+    if plan.script_items():
+        steps.append(
+            'Run the script in Tools > Developer > Run JavaScript, with "Run as async function" '
+            "ticked, and save the log it returns."
+        )
+    steps.append("Take a new snapshot and run `pinax check`.")
+    lines += ["", "## Steps", ""]
+    lines += [f"{number}. {step}" for number, step in enumerate(steps, 1)]
+    if plan.creations:
+        lines += [
+            "",
+            f"## Create from a record ({len(plan.creations)})",
+            "",
+            "| Title | DOI | Destination | Records |",
+            "| --- | --- | --- | --- |",
+        ]
+        lines += [
+            f"| {_cell(op.title)} | {op.doi or EMPTY} | `{_cell(path[op.destination])}` | "
+            f"{_cell("; ".join(op.records))} |"
+            for op in plan.creations
+        ]
     lines += [
-        "",
-        "## Steps",
-        "",
-        "1. Review the tables below and the generated script.",
-        f"2. Open the staging folder with `open {shlex.quote(str(staging))}`. For each sub-folder, "
-        "select its collection in Zotero, then drag the files of the sub-folder, not the folder, "
-        "into the collection.",
-        '3. Run the script in Tools > Developer > Run JavaScript, with "Run as async function" '
-        "ticked, and save the log it returns.",
-        "4. Take a new snapshot and run `pinax check`.",
         "",
         f"## Import ({len(plan.imports)})",
         "",

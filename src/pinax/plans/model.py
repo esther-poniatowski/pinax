@@ -2,13 +2,14 @@
 The change plan: the contract between the plan builder, the script writer and the checks.
 
 Nothing writes to the library without a plan, and the checks read the same plan back. A plan holds
-the destination collections of its targets, and five lists of operations:
+the destination collections of its targets, and six lists of operations:
 
 - imports: works that no item holds, each imported from one staged file into one destination;
+- creations: works that no item holds, each created from a record through the connector;
 - attachments: PDFs to attach to existing items without one;
 - filings: existing items to add to a destination collection;
 - corrections: fields, types and creators to correct;
-- skipped: works that cannot be imported, with the reason.
+- skipped: works that can be neither imported nor created, with the reason.
 
 Classes
 -------
@@ -16,7 +17,7 @@ Destination
     Collection receiving the filed and imported items of one or more folders.
 FileRef
     Source file of an operation, identified by its content.
-ImportOp, AttachOp, FileOp, CorrectOp, SkippedWork
+ImportOp, CreateOp, AttachOp, FileOp, CorrectOp, SkippedWork
     The operations of a plan.
 CreatorSpec
     One creator of a correction.
@@ -29,7 +30,7 @@ from typing import Any
 
 from pinax.errors import ArtifactError
 
-PLAN_FORMAT = "pinax-plan/2"
+PLAN_FORMAT = "pinax-plan/3"
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,42 @@ class ImportOp:
     members: tuple[str, ...]
     destination: str
     also: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
+class CreateOp:  # pylint: disable=too-many-instance-attributes
+    """
+    Work to create from a record, through the connector.
+
+    Attributes
+    ----------
+    identity : str
+        Identity of the work (`doi:` or `title:`).
+    title : str
+        Title of the record, which the created item must carry.
+    doi : str
+        DOI of the work, empty when the record has none.
+    item : dict[str, Any]
+        Item data posted to `saveItems`.
+    destination : str
+        Key of the collection receiving the item: the destination of the folder of the export that
+        holds the record.
+    records : tuple[str, ...]
+        References of the records of the work, as `refs.bib#3`.
+    also : tuple[str, ...]
+        Keys of the other destinations of the work, which the next plan files the item into.
+    files : tuple[str, ...]
+        SHA-256 of the PDFs of the work, which the next plan attaches to the created item.
+    """
+
+    identity: str
+    title: str
+    doi: str
+    item: dict[str, Any]
+    destination: str
+    records: tuple[str, ...]
+    also: tuple[str, ...] = ()
+    files: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -251,7 +288,7 @@ class ChangePlan:
     destinations : tuple[Destination, ...]
         Collections receiving filed and imported items, each with the scope that counted as filed
         when the plan was built.
-    imports, attachments, filings, corrections, skipped
+    imports, attachments, filings, corrections, skipped, creations
         Operations of the plan.
     """
 
@@ -261,6 +298,7 @@ class ChangePlan:
     filings: tuple[FileOp, ...] = ()
     corrections: tuple[CorrectOp, ...] = ()
     skipped: tuple[SkippedWork, ...] = ()
+    creations: tuple[CreateOp, ...] = ()
 
     def destination(self, key: str) -> Destination:
         """
@@ -336,9 +374,24 @@ class ChangePlan:
                     SkippedWork(op["work_id"], op["reason"], tuple(op["files"]))
                     for op in data.get("skipped", [])
                 ),
+                creations=tuple(_creation(op) for op in data.get("creations", [])),
             )
         except (KeyError, TypeError) as error:
             raise ArtifactError(f"malformed change plan: {error}") from error
+
+
+def _creation(op: dict[str, Any]) -> CreateOp:
+    """Creation rebuilt from its serialized form."""
+    return CreateOp(
+        identity=op["identity"],
+        title=op["title"],
+        doi=op.get("doi", ""),
+        item=dict(op["item"]),
+        destination=op["destination"],
+        records=tuple(op["records"]),
+        also=tuple(op.get("also", [])),
+        files=tuple(op.get("files", [])),
+    )
 
 
 def _correction(op: dict[str, Any]) -> CorrectOp:

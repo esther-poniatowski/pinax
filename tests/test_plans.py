@@ -17,12 +17,13 @@ from conftest import (
 from pinax.config import Target
 from pinax.errors import ConfigError, PlanError
 from pinax.library.model import Library
-from pinax.matching.model import Match, Method, Status, Verdict
+from pinax.matching.model import Match, Method, RecordMatch, Status, Verdict
 from pinax.plans.builder import PlanBuilder
 from pinax.plans.corrections import load_corrections
 from pinax.plans.model import ChangePlan
 from pinax.plans.staging import stage
 from pinax.plans.worklist import render_worklist
+from pinax.records.works import group_records
 from pinax.sources.inventory import Inventory
 
 COLLECTIONS = [
@@ -220,3 +221,69 @@ def test_worklist_lists_every_operation(sources: SourceTree, tmp_path: Path) -> 
     assert "## Not imported (1)" in text
     assert "open '" in text and "staged dir'" in text
     assert "| `review/background` | `BACKGR01` | `review` | BACKGR01 background |" in text
+
+
+RECORDS = """
+@article{doe2001,
+  title = {An Item Without PDF},
+  author = {Doe, Jane},
+  year = {2001}
+}
+@article{roe2020,
+  title = {A New Synthetic Work},
+  author = {Roe, Ann},
+  journal = {Journal of Examples},
+  year = {2020},
+  doi = {10.5555/new}
+}
+"""
+
+
+def _record_inventory(sources: SourceTree) -> Inventory:
+    _inventory(sources)
+    sources.add("a/refs.bib", RECORDS.encode())
+    sources.add("b/dois.bib", b"@misc{x, doi = {10.5555/only}}\n")
+    return sources.inventory()
+
+
+def _record_matches(inventory: Inventory, status: Status = Status.ABSENT) -> list[RecordMatch]:
+    matches = []
+    for work in group_records(inventory.records):
+        if work.identity == "title:item without pdf|2001":
+            matches.append(RecordMatch(work.identity, work.refs, Status.MATCHED, "NOPDF001"))
+        else:
+            matches.append(RecordMatch(work.identity, work.refs, status))
+    return matches
+
+
+def test_plan_creates_absent_records_and_claims_their_pdfs(sources: SourceTree) -> None:
+    inventory = _record_inventory(sources)
+    targets = [target("a", "BACKGR01", "REVIEW01"), target("b", "METHOD01")]
+    builder = PlanBuilder(_library(), inventory, targets)
+    plan = builder.build(_matches(inventory), records=_record_matches(inventory))
+    (creation,) = plan.creations
+    assert (creation.identity, creation.destination, creation.records) == (
+        "doi:10.5555/new",
+        "BACKGR01",
+        ("a/refs.bib#2",),
+    )
+    assert creation.item["itemType"] == "journalArticle"
+    assert creation.item["publicationTitle"] == "Journal of Examples"
+    new_pdf = next(f.sha256 for f in inventory.files if f.relative.as_posix() == "a/new.pdf")
+    assert creation.files == (new_pdf,)
+    assert [Path(op.file.path).name for op in plan.imports] == ["new.pdf"]
+    assert Path(plan.imports[0].file.path).parent.name == "b"
+    assert ("NOPDF001", "BACKGR01") in {(op.item, op.destination) for op in plan.filings}
+    assert [op.reason for op in plan.skipped if op.work_id == "doi:10.5555/only"] == [
+        "the records hold only a DOI, from which no item can be created"
+    ]
+    assert ChangePlan.from_json(plan.to_json()) == plan
+    text = render_worklist(plan, sources.root / "staged")
+    assert "## Create from a record (1)" in text and "pinax create --limit 1" in text
+
+
+def test_plan_refuses_records_left_to_check(sources: SourceTree) -> None:
+    inventory = _record_inventory(sources)
+    builder = PlanBuilder(_library(), inventory, [target(".", "BACKGR01", "REVIEW01")])
+    with pytest.raises(PlanError, match="a/refs.bib#2"):
+        builder.build(_matches(inventory), records=_record_matches(inventory, Status.CHECK))

@@ -13,12 +13,13 @@ from pathlib import PurePosixPath
 from pinax.config import Target
 from pinax.errors import PlanError
 from pinax.library.model import Item, Library
-from pinax.matching.model import Match, Status
+from pinax.matching.model import Match, RecordMatch, Status
 from pinax.matching.works import Work, group_works
 from pinax.plans.model import (
     AttachOp,
     ChangePlan,
     CorrectOp,
+    CreateOp,
     Destination,
     FileOp,
     FileRef,
@@ -26,7 +27,9 @@ from pinax.plans.model import (
     SkippedWork,
 )
 from pinax.plans.targets import TargetMap
-from pinax.sources.inventory import Content, Inventory, SourceFile
+from pinax.records.items import connector_item
+from pinax.records.works import RecordWork, group_records
+from pinax.sources.inventory import Content, Inventory
 
 
 def _unique_name(name: str, taken: set[str]) -> str:
@@ -64,9 +67,9 @@ class PlanBuilder:
         self._inventory = inventory
         self._targets = TargetMap(library, targets)
 
-    def _destinations(self, files: Iterable[SourceFile]) -> list[Destination]:
-        """Distinct destinations of the folders of some files, in file order."""
-        return list(dict.fromkeys(self._targets.destination(file.folder) for file in files))
+    def _destinations(self, folders: Iterable[str]) -> list[Destination]:
+        """Distinct destinations of some folders of the sources, in folder order."""
+        return list(dict.fromkeys(self._targets.destination(folder) for folder in folders))
 
     def _file_ref(self, content: Content) -> FileRef:
         """Reference to the first PDF file of a content."""
@@ -102,14 +105,24 @@ class PlanBuilder:
             ops.append(AttachOp(key, item.citation_key, item.title, self._file_ref(largest)))
         return ops
 
-    def _filings(self, matches: Sequence[Match]) -> list[FileOp]:
+    def _filings(
+        self, matches: Sequence[Match], records: Sequence[RecordMatch], works: dict[str, RecordWork]
+    ) -> list[FileOp]:
         """Matched and preprint items outside the scope of a destination of their folders."""
+        held: list[tuple[str, Iterable[str]]] = [
+            (match.item, (f.folder for f in self._inventory.contents[match.sha256].files))
+            for match in matches
+            if match.status in (Status.MATCHED, Status.PREPRINT_OF)
+        ]
+        held += [
+            (match.item, works[match.identity].folders)
+            for match in records
+            if match.status in (Status.MATCHED, Status.PREPRINT_OF)
+        ]
         pairs: dict[tuple[str, str], Destination] = {}
-        for match in matches:
-            if match.status not in (Status.MATCHED, Status.PREPRINT_OF):
-                continue
-            key = self._item(match.item).key
-            for dest in self._destinations(self._inventory.contents[match.sha256].files):
+        for matched, folders in held:
+            key = self._item(matched).key
+            for dest in self._destinations(folders):
                 pairs.setdefault((key, dest.key), dest)
         ops = []
         for (key, _), dest in pairs.items():
@@ -133,7 +146,7 @@ class PlanBuilder:
                 continue
             pdf = next(f for f in representative.files if f.is_pdf)
             destination = self._targets.destination(pdf.folder)
-            others = self._destinations(f for c in work.members for f in c.files)
+            others = self._destinations(f.folder for c in work.members for f in c.files)
             imports.append(
                 ImportOp(
                     work_id=work.work_id,
@@ -147,6 +160,49 @@ class PlanBuilder:
             )
         return imports, skipped
 
+    def _creations(
+        self, records: Sequence[RecordMatch], works: dict[str, RecordWork], absent: list[Content]
+    ) -> tuple[list[CreateOp], list[SkippedWork], set[str]]:
+        """
+        One creation per record work that no item holds, from its record with the most fields.
+
+        A work that only DOIs describe is skipped, since a creation needs metadata. The absent PDFs
+        sharing the DOI of a created work are returned as claimed: the plan does not import them,
+        and the next plan attaches them to the created item.
+        """
+        pdfs: dict[str, list[str]] = {}
+        for content in absent:
+            if content.doi and any(file.is_pdf for file in content.files):
+                pdfs.setdefault(content.doi, []).append(content.sha256)
+        creations: list[CreateOp] = []
+        skipped: list[SkippedWork] = []
+        claimed: set[str] = set()
+        for match in records:
+            if match.status is not Status.ABSENT:
+                continue
+            work = works[match.identity]
+            record = work.best
+            if not record.has_metadata:
+                reason = "the records hold only a DOI, from which no item can be created"
+                skipped.append(SkippedWork(work.identity, reason, work.refs))
+                continue
+            first, *others = self._destinations(work.folders)
+            files = tuple(pdfs.get(record.doi, [])) if record.doi else ()
+            claimed.update(files)
+            creations.append(
+                CreateOp(
+                    identity=work.identity,
+                    title=record.title,
+                    doi=record.doi,
+                    item=connector_item(record),
+                    destination=first.key,
+                    records=work.refs,
+                    also=tuple(dest.key for dest in others),
+                    files=files,
+                )
+            )
+        return creations, skipped, claimed
+
     def _corrections(self, corrections: Sequence[CorrectOp]) -> list[CorrectOp]:
         """Corrections, after checking that each item is live."""
         missing = [op.item for op in corrections if self._library.get_live(op.item) is None]
@@ -154,7 +210,12 @@ class PlanBuilder:
             raise PlanError(f"corrected items not in the library: {", ".join(missing)}")
         return list(corrections)
 
-    def build(self, matches: Sequence[Match], corrections: Sequence[CorrectOp] = ()) -> ChangePlan:
+    def build(
+        self,
+        matches: Sequence[Match],
+        corrections: Sequence[CorrectOp] = (),
+        records: Sequence[RecordMatch] = (),
+    ) -> ChangePlan:
         """
         Build the plan.
 
@@ -164,36 +225,47 @@ class PlanBuilder:
             Matches of every content of the inventory.
         corrections : Sequence[CorrectOp]
             Corrections of item records.
+        records : Sequence[RecordMatch]
+            Matches of every record work of the inventory.
 
         Returns
         -------
         ChangePlan
-            Imports of the absent works, each into the destination of its imported file;
-            attachments to matched items without a PDF; filings of matched items outside the scope
-            of each destination of their folders; and the corrections. A preprint never becomes
-            the PDF of the published item, so preprint matches only lead to filings.
+            Creations of the absent record works; imports of the other absent works, each into
+            the destination of its imported file; attachments to matched items without a PDF;
+            filings of matched items outside the scope of each destination of their folders; and
+            the corrections. A preprint never becomes the PDF of the published item, so preprint
+            matches only lead to filings.
 
         Raises
         ------
         PlanError
-            If a match still awaits a check, or a corrected or matched item is missing.
+            If a match still awaits a check, a corrected or matched item is missing, or a record
+            match names a work absent from the inventory.
         """
         pending = [
             str(self._inventory.contents[m.sha256].first.relative)
             for m in matches
             if m.status is Status.CHECK
         ]
+        pending += [m.refs[0] for m in records if m.status is Status.CHECK]
         if pending:
             raise PlanError(
                 "matches await a check; resolve them before planning:\n  " + "\n  ".join(pending)
             )
+        works = {work.identity: work for work in group_records(self._inventory.records)}
+        unknown = [m.identity for m in records if m.identity not in works]
+        if unknown:
+            raise PlanError(f"record matches name works absent from the inventory: {unknown[0]}")
         absent = [self._inventory.contents[m.sha256] for m in matches if m.status is Status.ABSENT]
-        imports, skipped = self._imports(group_works(absent))
+        creations, unborn, claimed = self._creations(records, works, absent)
+        imports, skipped = self._imports(group_works(c for c in absent if c.sha256 not in claimed))
         return ChangePlan(
             destinations=self._targets.destinations,
             imports=tuple(imports),
             attachments=tuple(self._attachments(matches)),
-            filings=tuple(self._filings(matches)),
+            filings=tuple(self._filings(matches, records, works)),
             corrections=tuple(self._corrections(corrections)),
-            skipped=tuple(skipped),
+            skipped=tuple(skipped + unborn),
+            creations=tuple(creations),
         )

@@ -43,7 +43,7 @@ from pinax.library.snapshot import load_snapshot, take_snapshot
 from pinax.library.storage import StorageIndex
 from pinax.matching.confirm import TitleConfirmer
 from pinax.matching.matcher import Matcher
-from pinax.matching.model import matches_from_json, matches_to_json
+from pinax.matching.model import matches_from_json, matches_to_json, record_matches_from_json
 from pinax.matching.resolutions import load_resolutions
 from pinax.plans.builder import PlanBuilder
 from pinax.plans.corrections import load_corrections
@@ -171,9 +171,13 @@ def make_plan(config: Config, label: str) -> ChangePlan:
     workspace = _workspace(config)
     library = load_snapshot(workspace.require(workspace.snapshot(label), "read"))
     inventory = _inventory(workspace)
-    matches = matches_from_json(read_json(workspace.require(workspace.matches, "match")))
+    data = read_json(workspace.require(workspace.matches, "match"))
     builder = PlanBuilder(library, inventory, config.targets)
-    plan = builder.build(matches, load_corrections(config.corrections))
+    plan = builder.build(
+        matches_from_json(data),
+        load_corrections(config.corrections),
+        record_matches_from_json(data),
+    )
     write_json(workspace.plan, plan.to_json())
     write_text(workspace.worklist, render_worklist(plan, _staging(config)))
     return plan
