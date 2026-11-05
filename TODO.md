@@ -8,6 +8,11 @@ Items are grouped by the condition that opens them.
 - [ ] **Run `pinax create` on a real library.** The creation through the connector has run against the fake application of the tests only. Its first real run creates one item with `--limit 1`. The researcher reads that item in Zotero, and `pinax check` verifies it, before the command runs without the limit.
 - [ ] **Check the item types that hold a DOI.** The builder of connector items, in `src/pinax/records/items.py`, writes the DOI into its own field for journal articles, conference papers and preprints only, and into the field `extra` for every other type. Compare its table `TYPE_FIELDS` with the schema of the running Zotero version, and extend the types that hold a DOI field.
 
+## Defects observed on a real import
+
+- [ ] **Prefer a complete DOI over a truncated one.** The function `find_doi`, in `src/pinax/text.py`, returns the first DOI of a text. A page printed from a browser can carry the address of the page in its header, cut short by an ellipsis, so the first match is a fragment of the DOI that the page prints in full further down. The fragment then serves as the identity of the work in the plan and in the checks. Reject a match followed by an ellipsis, or prefer a DOI written after `doi.org/`, and add a test whose page holds a truncated header above the full DOI.
+- [ ] **Separate a title to read from a title that contradicts the PDF.** The check of an import, in `src/pinax/checks/operations.py`, reports a `fail` for every verdict other than `confirmed`. The verdict `check` arises when the title words appear in the pages but not in sequence: a text layer that replaces a ligature by an unknown character, a page header that truncates the title, or a file that holds one section of a larger work. On a real import, such fails reached a share of 1.00. Report the verdict `check` as a `note` that asks to read the title, and keep the `fail` for the verdict `rejected`.
+
 ## Open decisions
 
 - [ ] **Create the records described by a DOI only.** The matching reads such records, but the plan skips their creation, since the connector needs metadata. Retrieving their metadata from a registry, such as Crossref, would send the DOIs to an external service. Decide whether Pinax offers this retrieval, as an option that the configuration enables.
