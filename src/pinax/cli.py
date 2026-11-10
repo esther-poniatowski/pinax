@@ -2,8 +2,11 @@
 Command-line interface for the `pinax` package.
 
 Defines one command per stage, available via `python -m pinax` or `pinax` once installed. Every
-command reads the configuration file given by `--config`, and otherwise `config/tools/pinax.yml`,
-then `pinax.yml`, below the current directory.
+command reads the configuration file given by `--config`, read from the current folder, and
+otherwise the one of `config/tools/pinax.yml` and `pinax.yml` that exists below the root. The root
+is the folder given by `--root`, else by `PINAX_ROOT`, else the nearest folder, from the current
+one upwards, holding one of both files, else the current folder; every relative path written in the
+configuration file resolves against it.
 
 Commands
 --------
@@ -38,7 +41,14 @@ import yaml
 
 from pinax import __version__, info, stages
 from pinax.checks.model import Outcome
-from pinax.config import Config, effective_data, load_config, locate_config
+from pinax.config import (
+    ROOT_VARIABLE,
+    Config,
+    effective_data,
+    find_root,
+    load_config,
+    locate_config,
+)
 from pinax.errors import PinaxError
 from pinax.library.client import ZoteroClient
 from pinax.library.connector import Connector, Outcome as CreationOutcome
@@ -51,8 +61,20 @@ ConfigOption = Annotated[
     typer.Option(
         "--config",
         "-c",
-        help="Configuration file of the reconciliation; by default config/tools/pinax.yml, "
-        "then pinax.yml.",
+        help="Configuration file of the reconciliation, relative to the current folder; by "
+        "default config/tools/pinax.yml or pinax.yml below the root.",
+    ),
+]
+RootOption = Annotated[
+    Path | None,
+    typer.Option(
+        "--root",
+        "-r",
+        envvar=ROOT_VARIABLE,
+        show_envvar=True,
+        help="Root of the reconciliation, against which the paths of the configuration resolve; "
+        "by default the nearest folder, from the current one upwards, holding "
+        "config/tools/pinax.yml or pinax.yml, else the current folder.",
     ),
 ]
 LabelOption = Annotated[
@@ -64,18 +86,23 @@ NONE = "-"
 EXIT_FAILED_CHECKS = 1
 
 
-def _locate(path: Path | None) -> Path:
+def _root(root: Path | None) -> Path:
+    """Root given, or the nearest folder holding a configuration, or the current folder."""
+    return root.resolve() if root is not None else find_root(Path.cwd())
+
+
+def _locate(root: Path | None, path: Path | None) -> Path:
     """Configuration file given or found, exiting with an error message when none is found."""
     try:
-        return locate_config(path)
+        return locate_config(_root(root), path)
     except PinaxError as error:
         raise _fail(error) from error
 
 
-def _load(path: Path | None) -> Config:
+def _load(root: Path | None, path: Path | None) -> Config:
     """Load a configuration, exiting with an error message when it is missing or invalid."""
     try:
-        return load_config(_locate(path))
+        return load_config(_locate(root, path), _root(root))
     except PinaxError as error:
         raise _fail(error) from error
 
@@ -98,10 +125,10 @@ def cli_info() -> None:
 
 
 @app.command("config")
-def cli_config(config: ConfigOption = None) -> None:
+def cli_config(config: ConfigOption = None, root: RootOption = None) -> None:
     """Print the configuration in effect: the file merged over the shipped defaults."""
-    path = _locate(config)
-    _load(path)
+    path = _locate(root, config)
+    _load(root, path)
     try:
         data = effective_data(path)
     except PinaxError as error:
@@ -110,9 +137,9 @@ def cli_config(config: ConfigOption = None) -> None:
 
 
 @app.command("probe")
-def cli_probe(config: ConfigOption = None) -> None:
+def cli_probe(config: ConfigOption = None, root: RootOption = None) -> None:
     """Record the versions of the local API and the connector, without writing."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         typer.echo(json.dumps(stages.probe(ZoteroClient(settings.library.api)), indent=1))
     except PinaxError as error:
@@ -120,9 +147,11 @@ def cli_probe(config: ConfigOption = None) -> None:
 
 
 @app.command("read")
-def cli_read(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
+def cli_read(
+    config: ConfigOption = None, root: RootOption = None, snapshot: LabelOption = "current"
+) -> None:
     """Save a snapshot of the library through the local API, without writing."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         counts = stages.read_library(settings, ZoteroClient(settings.library.api), snapshot)
     except PinaxError as error:
@@ -133,9 +162,11 @@ def cli_read(config: ConfigOption = None, snapshot: LabelOption = "current") -> 
 
 
 @app.command("keys")
-def cli_keys(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
+def cli_keys(
+    config: ConfigOption = None, root: RootOption = None, snapshot: LabelOption = "current"
+) -> None:
     """Compare the citation keys of a snapshot with those of Better BibTeX."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         differences = stages.compare_keys(settings, ZoteroClient(settings.library.api), snapshot)
     except PinaxError as error:
@@ -146,9 +177,9 @@ def cli_keys(config: ConfigOption = None, snapshot: LabelOption = "current") -> 
 
 
 @app.command("inventory")
-def cli_inventory(config: ConfigOption = None) -> None:
+def cli_inventory(config: ConfigOption = None, root: RootOption = None) -> None:
     """Inventory the folder of sources: digests, DOI and text of the first pages."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         counts = stages.make_inventory(settings, PopplerReader())
     except PinaxError as error:
@@ -157,9 +188,11 @@ def cli_inventory(config: ConfigOption = None) -> None:
 
 
 @app.command("match")
-def cli_match(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
+def cli_match(
+    config: ConfigOption = None, root: RootOption = None, snapshot: LabelOption = "current"
+) -> None:
     """Match each content of the inventory with a snapshot of the library."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         counts = stages.match(settings, snapshot)
     except PinaxError as error:
@@ -168,9 +201,11 @@ def cli_match(config: ConfigOption = None, snapshot: LabelOption = "current") ->
 
 
 @app.command("plan")
-def cli_plan(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
+def cli_plan(
+    config: ConfigOption = None, root: RootOption = None, snapshot: LabelOption = "current"
+) -> None:
     """Build the change plan and its worklist; refuses while a match awaits a check."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         plan = stages.make_plan(settings, snapshot)
     except PinaxError as error:
@@ -186,10 +221,11 @@ def cli_plan(config: ConfigOption = None, snapshot: LabelOption = "current") -> 
 @app.command("stage")
 def cli_stage(
     config: ConfigOption = None,
+    root: RootOption = None,
     reveal: Annotated[bool, typer.Option("--open", help="Open the folder in Finder.")] = False,
 ) -> None:
     """Copy the file of each import into a staging folder that holds only them."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         folder, count = stages.stage_imports(settings)
     except PinaxError as error:
@@ -200,9 +236,9 @@ def cli_stage(
 
 
 @app.command("script")
-def cli_script(config: ConfigOption = None) -> None:
+def cli_script(config: ConfigOption = None, root: RootOption = None) -> None:
     """Generate the Zotero script that applies the plan."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         path = stages.write_script(settings)
     except PinaxError as error:
@@ -213,6 +249,7 @@ def cli_script(config: ConfigOption = None) -> None:
 @app.command("create")
 def cli_create(
     config: ConfigOption = None,
+    root: RootOption = None,
     snapshot: LabelOption = "current",
     limit: Annotated[
         int | None, typer.Option("--limit", min=1, help="Largest number of items to create.")
@@ -226,7 +263,7 @@ def cli_create(
     ] = False,
 ) -> None:
     """Create the items of the plan from their records through the connector, verifying each."""
-    settings = _load(config)
+    settings = _load(root, config)
     api = settings.library.api
     try:
         results = stages.create(
@@ -247,13 +284,17 @@ def cli_create(
 @app.command("check")
 def cli_check(
     config: ConfigOption = None,
+    root: RootOption = None,
     snapshot: LabelOption = "after",
     log: Annotated[
-        Path | None, typer.Option("--log", help="Action log returned by the script.")
+        Path | None,
+        typer.Option(
+            "--log", help="Action log returned by the script, relative to the current folder."
+        ),
     ] = None,
 ) -> None:
     """Check every operation of the plan against a snapshot taken after the change."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         report = stages.check(settings, snapshot, PopplerReader(), log)
     except PinaxError as error:
@@ -271,16 +312,26 @@ def cli_check(
 @app.command("export")
 def cli_export(
     config: ConfigOption = None,
+    root: RootOption = None,
     snapshot: LabelOption = "current",
     plan: Annotated[
-        list[Path] | None, typer.Option("--plan", help="Applied plan defining imported files.")
+        list[Path] | None,
+        typer.Option(
+            "--plan", help="Applied plan defining imported files, relative to the current folder."
+        ),
     ] = None,
     header: Annotated[
-        Path | None, typer.Option("--header", help="Comment block of the reference list.")
+        Path | None,
+        typer.Option(
+            "--header",
+            exists=True,
+            dir_okay=False,
+            help="Comment block of the reference list, relative to the current folder.",
+        ),
     ] = None,
 ) -> None:
     """Write the evidence file and the reference list of each folder."""
-    settings = _load(config)
+    settings = _load(root, config)
     try:
         routes, shared = stages.export(settings, snapshot, plan or [], header)
     except PinaxError as error:

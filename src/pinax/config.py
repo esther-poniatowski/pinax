@@ -5,10 +5,12 @@ One file declares the folder of sources, the destination collection of each of i
 library, the parameters of the matching, and the files of resolutions and corrections. The file is
 merged over the defaults shipped with the package, `defaults.yml`, from which every optional key
 takes its default; a null default, as for `staging`, selects a fallback that the documentation of
-the key states. Relative paths resolve against the directory of the configuration file, never
-against the current directory; the folder of a target is relative to the root of the sources.
-Without a path given, the file is `config/tools/pinax.yml` below the current directory, and
-otherwise `pinax.yml` in the current directory.
+the key states. Relative paths resolve against the root of the reconciliation, wherever the file
+lies; the folder of a target is relative to the root of the sources. The root is the folder given
+by `--root`, else by the variable `PINAX_ROOT`, else the nearest folder, from the current one
+upwards, holding `config/tools/pinax.yml` or `pinax.yml`, else the current folder. Without a path
+given, the file is the one of `config/tools/pinax.yml` and `pinax.yml` that exists below the root;
+both existing is an error.
 
 Classes
 -------
@@ -33,12 +35,14 @@ load_defaults() -> dict[str, Any]
     Defaults shipped with the package.
 merge(base, override) -> dict[str, Any]
     Mapping of `base` overridden by `override`, merged key by key.
-locate_config(path, folder) -> Path
-    Configuration file given, or the first found in its default places.
+find_root(start) -> Path
+    Nearest folder, from `start` upwards, holding a configuration, else `start`.
+locate_config(root, path) -> Path
+    Configuration file given, or the one found in its default places below the root.
 effective_data(path) -> dict[str, Any]
     Configuration file merged over the defaults, before validation.
-load_config(path) -> Config
-    Read and validate a configuration file.
+load_config(path, root) -> Config
+    Read and validate a configuration file, resolving its paths against the root.
 """
 
 from dataclasses import dataclass, fields
@@ -58,7 +62,9 @@ DEFAULTS = "defaults.yml"
 CONFIG_FILE = "pinax.yml"
 """Name of the configuration file."""
 CONFIG_LOCATIONS = (Path("config/tools") / CONFIG_FILE, Path(CONFIG_FILE))
-"""Places of the configuration file below the current directory, in the order of the lookup."""
+"""Places of the configuration file below the root."""
+ROOT_VARIABLE = "PINAX_ROOT"
+"""Environment variable naming the root, read when the command line names none."""
 
 
 @dataclass(frozen=True)
@@ -286,7 +292,7 @@ def _mapping(value: Any, where: str) -> dict[str, Any]:
 
 
 def _path(value: Any, base: Path, where: str) -> Path:
-    """Absolute path of a value, resolved against the directory of the configuration file."""
+    """Absolute path of a value, resolved against the root."""
     if not isinstance(value, str) or not value:
         raise ConfigError(f"{where} must be a non-empty path")
     path = Path(value).expanduser()
@@ -478,33 +484,61 @@ def merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     return merged
 
 
-def locate_config(path: Path | None, folder: Path = Path(".")) -> Path:
+def find_root(start: Path) -> Path:
     """
-    Configuration file given, or the first found in its default places.
+    Nearest folder, from `start` upwards, holding a configuration, else `start`.
 
     Parameters
     ----------
-    path : Path | None
-        Configuration file given on the command line, returned unchanged.
-    folder : Path
-        Folder below which the default places lie, the current directory by default.
+    start : Path
+        Folder where the search begins, the current folder of a command.
 
     Returns
     -------
     Path
-        `path` when given; otherwise `config/tools/pinax.yml`, then `pinax.yml`, below `folder`.
+        First folder, from `start` up to the top of the file system, holding a file at one of
+        `CONFIG_LOCATIONS`; `start` itself, resolved, when no folder holds one.
+    """
+    start = start.resolve()
+    for folder in (start, *start.parents):
+        if any((folder / location).is_file() for location in CONFIG_LOCATIONS):
+            return folder
+    return start
+
+
+def locate_config(root: Path, path: Path | None = None) -> Path:
+    """
+    Configuration file given, or the one found in its default places below the root.
+
+    Parameters
+    ----------
+    root : Path
+        Root of the reconciliation, below which the default places lie.
+    path : Path | None
+        Configuration file given on the command line, read from the current folder.
+
+    Returns
+    -------
+    Path
+        `path` when given; otherwise the one of `config/tools/pinax.yml` and `pinax.yml` that
+        exists below `root`.
 
     Raises
     ------
     ConfigError
-        If no path is given and no default place holds a file.
+        If both default places hold a file, or if no path is given and no default place holds
+        one. A given path that names no file is reported when the file is read.
     """
     if path is not None:
         return path
-    for location in CONFIG_LOCATIONS:
-        if (folder / location).is_file():
-            return folder / location
-    places = " or ".join(str(folder / location) for location in CONFIG_LOCATIONS)
+    found = [root / location for location in CONFIG_LOCATIONS if (root / location).is_file()]
+    if len(found) > 1:
+        raise ConfigError(
+            "two configuration files: " + " and ".join(str(item) for item in found) + "; keep one"
+        )
+    if found:
+        return found[0]
+    places = " or ".join(str(root / location) for location in CONFIG_LOCATIONS)
     raise ConfigError(f"configuration file not found: {places}")
 
 
@@ -538,14 +572,17 @@ def effective_data(path: Path) -> dict[str, Any]:
     return merge(load_defaults(), data)
 
 
-def load_config(path: Path) -> Config:
+def load_config(path: Path, root: Path) -> Config:
     """
-    Read and validate a configuration file.
+    Read and validate a configuration file, resolving its paths against the root.
 
     Parameters
     ----------
     path : Path
         YAML configuration file.
+    root : Path
+        Root of the reconciliation, against which every relative path of the file resolves,
+        wherever the file lies.
 
     Returns
     -------
@@ -558,7 +595,7 @@ def load_config(path: Path) -> Config:
         If the file is missing, is not YAML, or holds an invalid or unknown key.
     """
     data = effective_data(path)
-    base = path.resolve().parent
+    base = root.resolve()
     known = {"workspace", "sources", "targets", "library", "matching"}
     known |= {"resolutions", "corrections", "staging"}
     _reject_unknown(data, known, str(path))

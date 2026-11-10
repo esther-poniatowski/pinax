@@ -13,7 +13,7 @@ A reconciliation maps each file and each record of a folder of references to the
 - the Zotero desktop application is running, with Better BibTeX installed when the exports need citation keys;
 - a configuration file `pinax.yml` declares the root of the sources and the collection of each folder, as the [configuration reference](configuration.md) specifies.
 
-The option `--config` gives every command the path of the configuration file. Without it, a command reads `config/tools/pinax.yml` below the current directory, and otherwise `pinax.yml` in the current directory.
+The option `-c`, `--config` gives every command the path of the configuration file, read from the current folder. Without it, a command reads the one of `config/tools/pinax.yml` and `pinax.yml` that exists below the root, and stops with an error naming both when both exist. The option `-r`, `--root` gives the root, against which every relative path of the configuration file resolves; without it, the root is the folder named by the environment variable `PINAX_ROOT`, else the nearest folder, from the current one upwards, holding one of both files, else the current folder. A command therefore runs from any subfolder of the root.
 
 ## Reading the library
 

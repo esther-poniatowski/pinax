@@ -52,7 +52,7 @@ def test_stages_from_inventory_to_export(
         f"library: {{storage: {storage.root}}}\n",
         encoding="utf-8",
     )
-    config = load_config(config_path)
+    config = load_config(config_path, tmp_path)
     before = [
         api_item("OLDITEM1", title=TITLE, date="2004", creators=["Smith"], citationKey="smith2004")
     ]
@@ -108,7 +108,10 @@ def test_stages_from_inventory_to_export(
     assert [(e["zotero_item"], e["citation_key"]) for e in imported] == [("NEWITEM1", "roe2020")]
 
 
-def test_cli_reports_missing_artifacts_and_invalid_configs(tmp_path: Path) -> None:
+def test_cli_reports_missing_artifacts_and_invalid_configs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
     runner = CliRunner()
     result = runner.invoke(app, ["plan", "--config", str(tmp_path / "absent.yml")])
     assert result.exit_code == EXIT_ERROR
@@ -183,7 +186,7 @@ def test_records_from_export_to_creation_check_and_evidence(
         f"library: {{storage: {storage.root}}}\n",
         encoding="utf-8",
     )
-    config = load_config(config_path)
+    config = load_config(config_path, tmp_path)
     library_dir = config.workspace / "library"
     _fake_snapshot(library_dir / "current", zotero)
 
@@ -224,7 +227,7 @@ def test_a_run_after_a_failure_waits_for_the_reconciliation(
         f"library: {{storage: {storage.root}}}\n",
         encoding="utf-8",
     )
-    config = load_config(config_path)
+    config = load_config(config_path, tmp_path)
     _fake_snapshot(config.workspace / "library" / "current", zotero)
     stages.make_inventory(config, sources.reader)
     stages.match(config, "current")

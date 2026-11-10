@@ -66,20 +66,21 @@ def test_find_doi_returns_first_doi() -> None:
 
 
 def _write(path: Path, text: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(text, encoding="utf-8")
     return path
 
 
-def test_config_resolves_relative_paths_against_its_file(tmp_path: Path) -> None:
+def test_config_resolves_relative_paths_against_the_root(tmp_path: Path) -> None:
     path = _write(
-        tmp_path / "pinax.yml",
+        tmp_path / "config/tools/pinax.yml",
         "workspace: out\nsources: {root: refs}\n"
         "targets:\n"
         "  - {folder: a, destination: {key: DEST0001}}\n"
         f"  - {{folder: {tmp_path}/refs/b/c/, destination: {{path: /Review/B/}}, scope: {{key: R}}}}\n"
         "library: {storage: store}\nmatching: {reject_below: 1}\n",
     )
-    config = load_config(path)
+    config = load_config(path, tmp_path)
     assert config.workspace == tmp_path / "out"
     assert config.sources.root == tmp_path / "refs"
     assert config.library.storage == tmp_path / "store"
@@ -131,7 +132,7 @@ TARGET = "targets: [{folder: ., destination: {key: D}}]\n"
 )
 def test_config_rejects_invalid_files(tmp_path: Path, text: str, message: str) -> None:
     with pytest.raises(ConfigError, match=message):
-        load_config(_write(tmp_path / "pinax.yml", text))
+        load_config(_write(tmp_path / "pinax.yml", text), tmp_path)
 
 
 def test_defaults_set_every_matching_key() -> None:
@@ -147,7 +148,7 @@ def test_consumer_overrides_one_key_and_replaces_lists(tmp_path: Path) -> None:
         + TARGET
         + "matching: {stop_words: [Über, les, des], surname_prefix: 6}\n",
     )
-    config = load_config(path)
+    config = load_config(path, tmp_path)
     assert config.sources.ignore == ("Thumbs.db",)
     assert config.sources.pages == 2
     assert config.matching.stop_words == frozenset({"uber", "les", "des"})
