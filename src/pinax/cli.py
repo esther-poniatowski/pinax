@@ -2,7 +2,8 @@
 Command-line interface for the `pinax` package.
 
 Defines one command per stage, available via `python -m pinax` or `pinax` once installed. Every
-command reads the configuration file given by `--config`.
+command reads the configuration file given by `--config`, and otherwise `config/tools/pinax.yml`,
+then `pinax.yml`, below the current directory.
 
 Commands
 --------
@@ -37,7 +38,7 @@ import yaml
 
 from pinax import __version__, info, stages
 from pinax.checks.model import Outcome
-from pinax.config import Config, effective_data, load_config
+from pinax.config import Config, effective_data, load_config, locate_config
 from pinax.errors import PinaxError
 from pinax.library.client import ZoteroClient
 from pinax.library.connector import Connector, Outcome as CreationOutcome
@@ -46,7 +47,13 @@ from pinax.sources.pdf import PopplerReader
 app = typer.Typer(add_completion=False, no_args_is_help=True)
 
 ConfigOption = Annotated[
-    Path, typer.Option("--config", "-c", help="Configuration file of the reconciliation.")
+    Path | None,
+    typer.Option(
+        "--config",
+        "-c",
+        help="Configuration file of the reconciliation; by default config/tools/pinax.yml, "
+        "then pinax.yml.",
+    ),
 ]
 LabelOption = Annotated[
     str, typer.Option("--snapshot", "-s", help="Label of the library snapshot.")
@@ -57,13 +64,20 @@ NONE = "-"
 EXIT_FAILED_CHECKS = 1
 
 
-def _load(path: Path) -> Config:
-    """Load a configuration, exiting with an error message when it is invalid."""
+def _locate(path: Path | None) -> Path:
+    """Configuration file given or found, exiting with an error message when none is found."""
     try:
-        return load_config(path)
+        return locate_config(path)
     except PinaxError as error:
-        typer.echo(f"error: {error}", err=True)
-        raise typer.Exit(EXIT_ERROR) from error
+        raise _fail(error) from error
+
+
+def _load(path: Path | None) -> Config:
+    """Load a configuration, exiting with an error message when it is missing or invalid."""
+    try:
+        return load_config(_locate(path))
+    except PinaxError as error:
+        raise _fail(error) from error
 
 
 def _fail(error: PinaxError) -> typer.Exit:
@@ -84,18 +98,19 @@ def cli_info() -> None:
 
 
 @app.command("config")
-def cli_config(config: ConfigOption = Path("pinax.yml")) -> None:
+def cli_config(config: ConfigOption = None) -> None:
     """Print the configuration in effect: the file merged over the shipped defaults."""
-    _load(config)
+    path = _locate(config)
+    _load(path)
     try:
-        data = effective_data(config)
+        data = effective_data(path)
     except PinaxError as error:
         raise _fail(error) from error
     typer.echo(yaml.safe_dump(data, sort_keys=False, allow_unicode=True), nl=False)
 
 
 @app.command("probe")
-def cli_probe(config: ConfigOption = Path("pinax.yml")) -> None:
+def cli_probe(config: ConfigOption = None) -> None:
     """Record the versions of the local API and the connector, without writing."""
     settings = _load(config)
     try:
@@ -105,7 +120,7 @@ def cli_probe(config: ConfigOption = Path("pinax.yml")) -> None:
 
 
 @app.command("read")
-def cli_read(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "current") -> None:
+def cli_read(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
     """Save a snapshot of the library through the local API, without writing."""
     settings = _load(config)
     try:
@@ -118,7 +133,7 @@ def cli_read(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "
 
 
 @app.command("keys")
-def cli_keys(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "current") -> None:
+def cli_keys(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
     """Compare the citation keys of a snapshot with those of Better BibTeX."""
     settings = _load(config)
     try:
@@ -131,7 +146,7 @@ def cli_keys(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "
 
 
 @app.command("inventory")
-def cli_inventory(config: ConfigOption = Path("pinax.yml")) -> None:
+def cli_inventory(config: ConfigOption = None) -> None:
     """Inventory the folder of sources: digests, DOI and text of the first pages."""
     settings = _load(config)
     try:
@@ -142,7 +157,7 @@ def cli_inventory(config: ConfigOption = Path("pinax.yml")) -> None:
 
 
 @app.command("match")
-def cli_match(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "current") -> None:
+def cli_match(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
     """Match each content of the inventory with a snapshot of the library."""
     settings = _load(config)
     try:
@@ -153,7 +168,7 @@ def cli_match(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = 
 
 
 @app.command("plan")
-def cli_plan(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "current") -> None:
+def cli_plan(config: ConfigOption = None, snapshot: LabelOption = "current") -> None:
     """Build the change plan and its worklist; refuses while a match awaits a check."""
     settings = _load(config)
     try:
@@ -170,7 +185,7 @@ def cli_plan(config: ConfigOption = Path("pinax.yml"), snapshot: LabelOption = "
 
 @app.command("stage")
 def cli_stage(
-    config: ConfigOption = Path("pinax.yml"),
+    config: ConfigOption = None,
     reveal: Annotated[bool, typer.Option("--open", help="Open the folder in Finder.")] = False,
 ) -> None:
     """Copy the file of each import into a staging folder that holds only them."""
@@ -185,7 +200,7 @@ def cli_stage(
 
 
 @app.command("script")
-def cli_script(config: ConfigOption = Path("pinax.yml")) -> None:
+def cli_script(config: ConfigOption = None) -> None:
     """Generate the Zotero script that applies the plan."""
     settings = _load(config)
     try:
@@ -197,7 +212,7 @@ def cli_script(config: ConfigOption = Path("pinax.yml")) -> None:
 
 @app.command("create")
 def cli_create(
-    config: ConfigOption = Path("pinax.yml"),
+    config: ConfigOption = None,
     snapshot: LabelOption = "current",
     limit: Annotated[
         int | None, typer.Option("--limit", min=1, help="Largest number of items to create.")
@@ -231,7 +246,7 @@ def cli_create(
 
 @app.command("check")
 def cli_check(
-    config: ConfigOption = Path("pinax.yml"),
+    config: ConfigOption = None,
     snapshot: LabelOption = "after",
     log: Annotated[
         Path | None, typer.Option("--log", help="Action log returned by the script.")
@@ -255,7 +270,7 @@ def cli_check(
 
 @app.command("export")
 def cli_export(
-    config: ConfigOption = Path("pinax.yml"),
+    config: ConfigOption = None,
     snapshot: LabelOption = "current",
     plan: Annotated[
         list[Path] | None, typer.Option("--plan", help="Applied plan defining imported files.")

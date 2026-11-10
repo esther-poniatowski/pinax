@@ -7,6 +7,8 @@ merged over the defaults shipped with the package, `defaults.yml`, from which ev
 takes its default; a null default, as for `staging`, selects a fallback that the documentation of
 the key states. Relative paths resolve against the directory of the configuration file, never
 against the current directory; the folder of a target is relative to the root of the sources.
+Without a path given, the file is `config/tools/pinax.yml` below the current directory, and
+otherwise `pinax.yml` in the current directory.
 
 Classes
 -------
@@ -31,6 +33,8 @@ load_defaults() -> dict[str, Any]
     Defaults shipped with the package.
 merge(base, override) -> dict[str, Any]
     Mapping of `base` overridden by `override`, merged key by key.
+locate_config(path, folder) -> Path
+    Configuration file given, or the first found in its default places.
 effective_data(path) -> dict[str, Any]
     Configuration file merged over the defaults, before validation.
 load_config(path) -> Config
@@ -51,6 +55,10 @@ from pinax.text import MIN_WORD_LENGTH, fold, words
 
 DEFAULTS = "defaults.yml"
 """Package resource holding the default of every optional key."""
+CONFIG_FILE = "pinax.yml"
+"""Name of the configuration file."""
+CONFIG_LOCATIONS = (Path("config/tools") / CONFIG_FILE, Path(CONFIG_FILE))
+"""Places of the configuration file below the current directory, in the order of the lookup."""
 
 
 @dataclass(frozen=True)
@@ -468,6 +476,36 @@ def merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
         else:
             merged[key] = value
     return merged
+
+
+def locate_config(path: Path | None, folder: Path = Path(".")) -> Path:
+    """
+    Configuration file given, or the first found in its default places.
+
+    Parameters
+    ----------
+    path : Path | None
+        Configuration file given on the command line, returned unchanged.
+    folder : Path
+        Folder below which the default places lie, the current directory by default.
+
+    Returns
+    -------
+    Path
+        `path` when given; otherwise `config/tools/pinax.yml`, then `pinax.yml`, below `folder`.
+
+    Raises
+    ------
+    ConfigError
+        If no path is given and no default place holds a file.
+    """
+    if path is not None:
+        return path
+    for location in CONFIG_LOCATIONS:
+        if (folder / location).is_file():
+            return folder / location
+    places = " or ".join(str(folder / location) for location in CONFIG_LOCATIONS)
+    raise ConfigError(f"configuration file not found: {places}")
 
 
 def effective_data(path: Path) -> dict[str, Any]:

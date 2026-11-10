@@ -5,7 +5,7 @@ aliases:
 ---
 # Configuration files
 
-A reconciliation reads three YAML files: the configuration file, required, and two optional files of manual decisions. A relative path in the configuration file resolves against the directory of that file, never against the current directory. The folder of a target is an exception: it is relative to the root of the sources. An unknown key in any of the three files stops the command with an error.
+A reconciliation reads three YAML files: the configuration file, required, and two optional files of manual decisions. The configuration file is the one given by `--config`; without that option, it is `config/tools/pinax.yml` below the current directory, and otherwise `pinax.yml` in the current directory. A relative path in the configuration file resolves against the directory of that file, never against the current directory: a file in `config/tools/` writes `../../refs` for the folder `refs` of the current directory. The folder of a target is an exception: it is relative to the root of the sources. An unknown key in any of the three files stops the command with an error.
 
 ## Configuration file
 
