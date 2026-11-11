@@ -49,7 +49,7 @@ from pinax.config import (
     load_config,
     locate_config,
 )
-from pinax.errors import PinaxError
+from pinax.errors import LibraryError, PinaxError
 from pinax.library.client import ZoteroClient
 from pinax.library.connector import Connector, Outcome as CreationOutcome
 from pinax.sources.pdf import PopplerReader
@@ -81,6 +81,9 @@ LabelOption = Annotated[
     str, typer.Option("--snapshot", "-s", help="Label of the library snapshot.")
 ]
 EXIT_ERROR = 2
+EXIT_LIBRARY = 3
+"""Status of a failed or refused access to the Zotero library, which the researcher repairs in
+Zotero or by a new snapshot, not on the command line."""
 NONE = "-"
 """Placeholder printed for an absent value."""
 EXIT_FAILED_CHECKS = 1
@@ -108,9 +111,10 @@ def _load(root: Path | None, path: Path | None) -> Config:
 
 
 def _fail(error: PinaxError) -> typer.Exit:
-    """Print an error and return the exit that the command raises."""
+    """Print an error and return the exit that the command raises: status 3 for the library,
+    status 2 for a usage or configuration error."""
     typer.echo(f"error: {error}", err=True)
-    return typer.Exit(EXIT_ERROR)
+    return typer.Exit(EXIT_LIBRARY if isinstance(error, LibraryError) else EXIT_ERROR)
 
 
 def _counts(counter: Counter[str]) -> str:

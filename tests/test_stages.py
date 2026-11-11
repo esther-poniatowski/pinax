@@ -1,6 +1,7 @@
 """End-to-end test of the stages on a synthetic library snapshot, and of the command line."""
 
 import json
+import socket
 from pathlib import Path
 from typing import Any
 
@@ -19,7 +20,7 @@ from conftest import (
 )
 from fake_zotero import FakeZotero
 from pinax import stages
-from pinax.cli import EXIT_ERROR, app
+from pinax.cli import EXIT_ERROR, EXIT_LIBRARY, app
 from pinax.config import load_config
 from pinax.errors import LibraryError
 from pinax.library.client import ZoteroClient
@@ -123,6 +124,21 @@ def test_cli_reports_missing_artifacts_and_invalid_configs(
     result = runner.invoke(app, ["script", "--config", str(config)])
     assert result.exit_code == EXIT_ERROR
     assert "run `pinax plan` first" in result.output
+
+
+def test_cli_exits_with_status_3_when_the_library_is_unreachable(tmp_path: Path) -> None:
+    with socket.socket() as probe:
+        probe.bind(("127.0.0.1", 0))
+        port = probe.getsockname()[1]
+    config = tmp_path / "pinax.yml"
+    config.write_text(
+        "sources: {root: s}\ntargets: [{folder: ., destination: {key: D}}]\n"
+        f"library: {{api: 'http://127.0.0.1:{port}'}}\n",
+        encoding="utf-8",
+    )
+    result = CliRunner().invoke(app, ["probe", "--config", str(config)])
+    assert result.exit_code == EXIT_LIBRARY, result.output
+    assert "cannot reach" in result.output
 
 
 def test_cli_prints_the_configuration_merged_over_the_defaults(tmp_path: Path) -> None:

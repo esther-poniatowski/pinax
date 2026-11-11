@@ -26,3 +26,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
   `--config` from another folder needs `--root` set to its own folder to keep its paths.
 - An absent file given to `pinax export --header` is a usage error with status 2, no longer an
   uncaught exception.
+- A failed or refused access to the Zotero library exits with status 3, no longer 2, so that
+  status 2 keeps meaning a usage or configuration error.
